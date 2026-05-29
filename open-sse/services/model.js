@@ -14,6 +14,7 @@ const ALIAS_TO_PROVIDER_ID = {
   cl: "cline",
   oc: "opencode",
   ocg: "opencode-go",
+  fb: "freebuff",
   qd: "qoder",
   qoder: "qoder",
   // TTS providers
