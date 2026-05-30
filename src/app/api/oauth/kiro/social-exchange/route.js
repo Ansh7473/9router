@@ -27,10 +27,11 @@ export async function POST(request) {
 
     const kiroService = new KiroService();
 
-    // Exchange code for tokens (redirect_uri handled internally)
+    // Exchange code for tokens (using Kiro's backend service)
     const tokenData = await kiroService.exchangeSocialCode(
       code,
-      codeVerifier
+      codeVerifier,
+      provider
     );
 
     // Extract email from JWT if available

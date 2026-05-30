@@ -1400,6 +1400,106 @@ const PROVIDERS = {
       },
     }),
   },
+
+  "kiro-google": {
+    config: KIRO_CONFIG,
+    flowType: "authorization_code_pkce",
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+      const params = new URLSearchParams({
+        idp: "Google",
+        redirect_uri: `http://localhost:3128/oauth/callback?login_option=google`,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+        state: state,
+        prompt: "select_account",
+      });
+      return `https://prod.us-east-1.auth.desktop.kiro.dev/login?${params.toString()}`;
+    },
+    exchangeToken: async (config, code, redirectUri, codeVerifier) => {
+      const response = await fetch("https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          code: code,
+          code_verifier: codeVerifier,
+          redirect_uri: `http://localhost:3128/oauth/callback?login_option=google`,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Kiro Google token exchange failed: ${error}`);
+      }
+
+      return await response.json();
+    },
+    mapTokens: (tokens) => {
+      const email = extractEmailFromAccessToken(tokens.access_token);
+      return {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresIn: tokens.expires_in,
+        email,
+        profileArn: tokens.profileArn,
+        providerSpecificData: {
+          authMethod: "google",
+          idToken: tokens.id_token,
+        },
+      };
+    },
+  },
+
+  "kiro-github": {
+    config: KIRO_CONFIG,
+    flowType: "authorization_code_pkce",
+    buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
+      const params = new URLSearchParams({
+        idp: "Github",
+        redirect_uri: `http://localhost:3128/oauth/callback?login_option=github`,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+        state: state,
+        prompt: "select_account",
+      });
+      return `https://prod.us-east-1.auth.desktop.kiro.dev/login?${params.toString()}`;
+    },
+    exchangeToken: async (config, code, redirectUri, codeVerifier) => {
+      const response = await fetch("https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          code: code,
+          code_verifier: codeVerifier,
+          redirect_uri: `http://localhost:3128/oauth/callback?login_option=github`,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Kiro GitHub token exchange failed: ${error}`);
+      }
+
+      return await response.json();
+    },
+    mapTokens: (tokens) => {
+      const email = extractEmailFromAccessToken(tokens.access_token);
+      return {
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token,
+        expiresIn: tokens.expires_in,
+        email,
+        profileArn: tokens.profileArn,
+        providerSpecificData: {
+          authMethod: "github",
+          idToken: tokens.id_token,
+        },
+      };
+    },
+  },
 };
 
 /**

@@ -243,7 +243,7 @@ function extractTools(body) {
  *   toolUseEvent            { toolUseId, name, input }   — for tool calls
  *   messageStopEvent        {}                   — on finish
  */
-async function pipeOpenAIasEventStream(routerRes, res) {
+async function pipeOpenAIasEventStream(routerRes, res, onChunk) {
   if (!routerRes.body) {
     res.end(buildEventStreamFrame("messageStopEvent", {}));
     return;
@@ -287,6 +287,11 @@ async function pipeOpenAIasEventStream(routerRes, res) {
 
         let chunk;
         try { chunk = JSON.parse(raw); } catch { continue; }
+
+        // Call onChunk callback for model discovery
+        if (onChunk) {
+          try { await onChunk(chunk); } catch (e) { /* silently ignore */ }
+        }
 
         const delta = chunk?.choices?.[0]?.delta;
         if (!delta) continue;
@@ -380,6 +385,19 @@ async function intercept(req, res, bodyBuffer, mappedModel) {
     // 3: Forward to 9router
     const routerRes = await fetchRouter(openaiBody, "/v1/chat/completions", req.headers);
 
+    // Create callback to record models from response chunks
+    const onChunk = async (chunk) => {
+      try {
+        const { recordDiscoveredModels, extractModelsFromResponse } = require("../modelDiscovery");
+        const discoveredModels = extractModelsFromResponse(chunk);
+        if (discoveredModels.length > 0) {
+          recordDiscoveredModels("kiro", discoveredModels);
+        }
+      } catch (e) {
+        // Silently ignore model discovery errors
+      }
+    };
+
     // 4 + 5: Re-encode response as AWS EventStream binary
     res.writeHead(routerRes.status, {
       "Content-Type": "application/vnd.amazon.eventstream",
@@ -388,7 +406,7 @@ async function intercept(req, res, bodyBuffer, mappedModel) {
       "Transfer-Encoding": "chunked",
     });
 
-    await pipeOpenAIasEventStream(routerRes, res);
+    await pipeOpenAIasEventStream(routerRes, res, onChunk);
   } catch (error) {
     err(`[Kiro] ${error.message}`);
     if (!res.headersSent) {

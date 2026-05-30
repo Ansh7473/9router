@@ -5,11 +5,13 @@ import { KIRO_CONFIG } from "../constants/oauth.js";
  * Supports multiple authentication methods:
  * 1. AWS Builder ID (Device Code Flow)
  * 2. AWS IAM Identity Center/IDC (Device Code Flow)
- * 3. Google/GitHub Social Login (Authorization Code Flow + Manual Callback)
+ * 3. Google/GitHub Social Login (Authorization Code Flow via AWS Cognito)
  * 4. Import Token (Manual refresh token paste)
  */
 
-const KIRO_AUTH_SERVICE = "https://prod.us-east-1.auth.desktop.kiro.dev";
+const KIRO_COGNITO_DOMAIN = "kiro-prod-us-east-1.auth.us-east-1.amazoncognito.com";
+const KIRO_COGNITO_CLIENT_ID = "59bd15eh40ee7pc20h0bkcu7id";
+const KIRO_WEB_PORTAL = "https://app.kiro.dev";
 
 export class KiroService {
   /**
@@ -124,31 +126,42 @@ export class KiroService {
 
   /**
    * Build Google/GitHub social login URL
-   * Returns authorization URL for manual callback flow
-   * Uses kiro:// custom protocol as required by AWS Cognito whitelist
+   * Uses Kiro's desktop auth backend with AWS Cognito
    */
   buildSocialLoginUrl(provider, codeChallenge, state) {
     const idp = provider === "google" ? "Google" : "Github";
-    // AWS Cognito only whitelists kiro:// protocol, not localhost
-    const redirectUri = "kiro://kiro.kiroAgent/authenticate-success";
-    return `${KIRO_AUTH_SERVICE}/login?idp=${idp}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${codeChallenge}&code_challenge_method=S256&state=${state}&prompt=select_account`;
+    // Use localhost redirect URI that matches Kiro CLI
+    const redirectUri = `http://localhost:3128/oauth/callback?login_option=${provider}`;
+    
+    const params = new URLSearchParams({
+      idp: idp,
+      redirect_uri: redirectUri,
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+      state: state,
+      prompt: "select_account",
+    });
+    
+    return `https://prod.us-east-1.auth.desktop.kiro.dev/login?${params.toString()}`;
   }
 
   /**
-   * Exchange authorization code for tokens (Social Login)
-   * Must use same redirect_uri as authorization request
+   * Exchange authorization code for tokens (Social Login via Kiro Backend)
+   * Kiro uses their desktop auth backend service to handle the token exchange
+   * This endpoint is used by the Kiro CLI for OAuth flows
    */
-  async exchangeSocialCode(code, codeVerifier) {
-    // Must match the redirect_uri used in buildSocialLoginUrl
-    const redirectUri = "kiro://kiro.kiroAgent/authenticate-success";
+  async exchangeSocialCode(code, codeVerifier, provider = "google") {
+    // Use localhost redirect URI that matches Kiro CLI
+    const redirectUri = `http://localhost:3128/oauth/callback?login_option=${provider}`;
 
-    const response = await fetch(`${KIRO_AUTH_SERVICE}/oauth/token`, {
+    // Use Kiro's desktop auth backend service for token exchange
+    const response = await fetch(`https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        code,
+        code: code,
         code_verifier: codeVerifier,
         redirect_uri: redirectUri,
       }),
@@ -160,11 +173,14 @@ export class KiroService {
     }
 
     const data = await response.json();
+    
+    // Kiro's backend returns tokens with these field names
     return {
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
+      accessToken: data.accessToken || data.access_token,
+      refreshToken: data.refreshToken || data.refresh_token,
+      idToken: data.idToken || data.id_token,
       profileArn: data.profileArn,
-      expiresIn: data.expiresIn || 3600,
+      expiresIn: data.expiresIn || data.expires_in || 3600,
     };
   }
 
@@ -204,15 +220,17 @@ export class KiroService {
       };
     }
 
-    // Social auth refresh (Google/GitHub)
-    const response = await fetch(`${KIRO_AUTH_SERVICE}/refreshToken`, {
+    // Social auth refresh (Google/GitHub via AWS Cognito)
+    const response = await fetch(`https://${KIRO_COGNITO_DOMAIN}/oauth2/token`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({
-        refreshToken,
-      }),
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: KIRO_COGNITO_CLIENT_ID,
+        refresh_token: refreshToken,
+      }).toString(),
     });
 
     if (!response.ok) {
@@ -222,10 +240,9 @@ export class KiroService {
 
     const data = await response.json();
     return {
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken || refreshToken,
-      profileArn: data.profileArn,
-      expiresIn: data.expiresIn || 3600,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || refreshToken,
+      expiresIn: data.expires_in || 3600,
     };
   }
 
