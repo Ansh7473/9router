@@ -177,9 +177,12 @@ export function createSSEStream(options = {}) {
         // For Ollama: done=true is the final chunk with finish_reason/usage, must translate
         // For other formats: done=true is the [DONE] sentinel, skip
         if (parsed && parsed.done && targetFormat !== FORMATS.OLLAMA) {
-          const output = "data: [DONE]\n\n";
-          reqLogger?.appendConvertedChunk?.(output);
-          controller.enqueue(sharedEncoder.encode(output));
+          const isDoneSentNeeded = !sourceFormat || sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI_RESPONSE || sourceFormat === FORMATS.OPENAI_RESPONSES;
+          if (isDoneSentNeeded) {
+            const output = "data: [DONE]\n\n";
+            reqLogger?.appendConvertedChunk?.(output);
+            controller.enqueue(sharedEncoder.encode(output));
+          }
           continue;
         }
 
@@ -295,9 +298,12 @@ export function createSSEStream(options = {}) {
           // Some clients (e.g. OpenClaw) expect the OpenAI-style sentinel:
           //   data: [DONE]\n\n
           // Without it they can hang until timeout and trigger failover.
-          const doneOutput = "data: [DONE]\n\n";
-          reqLogger?.appendConvertedChunk?.(doneOutput);
-          controller.enqueue(sharedEncoder.encode(doneOutput));
+          const isDoneSentNeeded = !sourceFormat || sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI_RESPONSE || sourceFormat === FORMATS.OPENAI_RESPONSES;
+          if (isDoneSentNeeded) {
+            const doneOutput = "data: [DONE]\n\n";
+            reqLogger?.appendConvertedChunk?.(doneOutput);
+            controller.enqueue(sharedEncoder.encode(doneOutput));
+          }
 
           if (onStreamComplete) {
             onStreamComplete({
@@ -347,9 +353,12 @@ export function createSSEStream(options = {}) {
           }
         }
 
-        const doneOutput = "data: [DONE]\n\n";
-        reqLogger?.appendConvertedChunk?.(doneOutput);
-        controller.enqueue(sharedEncoder.encode(doneOutput));
+        const isDoneSentNeeded = !sourceFormat || sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI_RESPONSE || sourceFormat === FORMATS.OPENAI_RESPONSES;
+        if (isDoneSentNeeded) {
+          const doneOutput = "data: [DONE]\n\n";
+          reqLogger?.appendConvertedChunk?.(doneOutput);
+          controller.enqueue(sharedEncoder.encode(doneOutput));
+        }
 
         if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
           state.usage = estimateUsage(body, totalContentLength, sourceFormat);
@@ -390,7 +399,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, sourceFormat = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -399,6 +408,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    sourceFormat
   });
 }
