@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { pingModelByKind } from "./ping";
 import { getApiKeys } from "@/lib/localDb";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
@@ -11,6 +12,12 @@ export async function POST(request) {
     const { model, kind, speedTest } = await request.json();
     if (!model) return NextResponse.json({ error: "Model required" }, { status: 400 });
 
+    if (!speedTest) {
+      const result = await pingModelByKind(model, kind || "llm");
+      return NextResponse.json(result);
+    }
+
+    // Otherwise, perform the speed test (chat completions)
     const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
 
     // Get an active internal API key for auth (if requireApiKey is enabled)
@@ -27,33 +34,9 @@ export async function POST(request) {
 
     const start = Date.now();
 
-    // Route to appropriate endpoint based on kind
-    if (kind === "embedding") {
-      const res = await fetch(`${baseUrl}/api/v1/embeddings`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ model, input: "test" }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const latencyMs = Date.now() - start;
-      const rawText = await res.text().catch(() => "");
-      let parsed = null;
-      try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
-
-      if (!res.ok) {
-        const detail = parsed?.error?.message || parsed?.error || rawText;
-        return NextResponse.json({ ok: false, latencyMs, error: `HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 240)}` : ""}`, status: res.status });
-      }
-      const hasEmbedding = Array.isArray(parsed?.data) && parsed.data.length > 0 && Array.isArray(parsed.data[0]?.embedding);
-      if (!hasEmbedding) {
-        return NextResponse.json({ ok: false, latencyMs, status: res.status, error: "Provider returned no embedding data" });
-      }
-      return NextResponse.json({ ok: true, latencyMs, error: null, status: res.status });
-    }
-
-    // Default: chat completions
-    const maxTokens = speedTest ? 300 : 1;
-    const testMessage = speedTest ? "Write a 200-word essay about the future of artificial intelligence." : "hi";
+    // Default: chat completions for speedTest
+    const maxTokens = 300;
+    const testMessage = "Write a 200-word essay about the future of artificial intelligence.";
 
     const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
       method: "POST",
@@ -64,7 +47,7 @@ export async function POST(request) {
         stream: false,
         messages: [{ role: "user", content: testMessage }],
       }),
-      signal: AbortSignal.timeout(speedTest ? 60000 : 15000),
+      signal: AbortSignal.timeout(60000),
     });
     const latencyMs = Date.now() - start;
 
@@ -134,7 +117,7 @@ export async function POST(request) {
     }
 
     let tps = 0;
-    if (speedTest && completionTokens > 0 && latencyMs > 0) {
+    if (completionTokens > 0 && latencyMs > 0) {
       tps = Math.round((completionTokens / (latencyMs / 1000)) * 10) / 10;
     }
 
