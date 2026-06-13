@@ -17,6 +17,7 @@ import { OllamaLocalExecutor } from "./ollama-local.js";
 import { CommandCodeExecutor } from "./commandcode.js";
 import { FreebuffExecutor } from "./freebuff.js";
 import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
+import { MimoFreeExecutor } from "./mimo-free.js";
 import { DefaultExecutor } from "./default.js";
 
 const executors = {
@@ -42,6 +43,8 @@ const executors = {
   freebuff: new FreebuffExecutor(),
   fb: new FreebuffExecutor(),
   "xiaomi-tokenplan": new XiaomiTokenplanExecutor(),
+  "mimo-free": new MimoFreeExecutor(),
+  mmf: new MimoFreeExecutor(),
 };
 
 const defaultCache = new Map();
@@ -77,3 +80,4 @@ export { OllamaLocalExecutor } from "./ollama-local.js";
 export { CommandCodeExecutor } from "./commandcode.js";
 export { FreebuffExecutor } from "./freebuff.js";
 export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
+export { MimoFreeExecutor } from "./mimo-free.js";
