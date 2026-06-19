@@ -2,7 +2,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Button from "@/shared/components/Button";
-import { ConfirmModal } from "@/shared/components/Modal";
+import Modal, { ConfirmModal } from "@/shared/components/Modal";
+import Input from "@/shared/components/Input";
+import { useNotificationStore } from "@/store/notificationStore";
 
 const SERVER_TYPES = [
   { id: "remote-http", label: "Remote (HTTP)", icon: "cloud", description: "Streamable HTTP transport — sends JSON-RPC via POST" },
@@ -53,6 +55,7 @@ const PRESET_SERVERS = [
 ];
 
 export default function McpServersPageClient() {
+  const notify = useNotificationStore();
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -63,6 +66,11 @@ export default function McpServersPageClient() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [expandedServer, setExpandedServer] = useState(null);
   const [mounted, setMounted] = useState(false);
+
+  const [activeTab, setActiveTab] = useState("servers");
+  const [combos, setCombos] = useState([]);
+  const [showComboModal, setShowComboModal] = useState(false);
+  const [editingCombo, setEditingCombo] = useState(null);
 
   useEffect(() => {
     setMounted(true);
@@ -80,7 +88,22 @@ export default function McpServersPageClient() {
     }
   }, []);
 
-  useEffect(() => { fetchServers(); }, [fetchServers]);
+  const fetchCombos = useCallback(async () => {
+    try {
+      const res = await fetch("/api/combos");
+      if (res.ok) {
+        const data = await res.json();
+        setCombos((data.combos || []).filter(c => c.kind === "mcp"));
+      }
+    } catch (error) {
+      console.error("Error fetching combos:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchServers();
+    fetchCombos();
+  }, [fetchServers, fetchCombos]);
 
   const handleTest = async (server) => {
     setTestingId(server.id);
@@ -104,6 +127,82 @@ export default function McpServersPageClient() {
         setDeleteTarget(null);
       }
     } catch { }
+  };
+
+  const handleToggleLocalServers = async (newActive) => {
+    // For disabling:
+    if (!newActive) {
+      const localServers = servers.filter(s => s.type === "local-stdio");
+      if (localServers.length === 0) {
+        notify.info("No local stdio servers configured");
+        return;
+      }
+      await Promise.all(
+        localServers.map(s =>
+          fetch(`/api/mcp-servers/${s.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ isActive: false }),
+          })
+        )
+      );
+      setServers(prev => prev.map(s => s.type === "local-stdio" ? { ...s, isActive: false } : s));
+      notify.success("Disabled all local stdio servers");
+      return;
+    }
+
+    // For enabling:
+    // 1. Enable all existing local stdio servers in the DB
+    const existingLocals = servers.filter(s => s.type === "local-stdio");
+    await Promise.all(
+      existingLocals.map(s =>
+        fetch(`/api/mcp-servers/${s.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive: true }),
+        })
+      )
+    );
+
+    // 2. Identify all local stdio presets that are NOT currently in the DB
+    const existingNames = new Set(servers.map(s => s.name.toLowerCase()));
+    const presetsToAdd = PRESET_SERVERS.filter(p => p.type === "local-stdio" && !existingNames.has(p.name.toLowerCase()));
+
+    // 3. Add those presets to the DB as active
+    const addedServers = [];
+    for (const preset of presetsToAdd) {
+      try {
+        const formData = {
+          name: preset.name,
+          type: preset.type,
+          command: preset.command || "",
+          args: preset.args || [],
+          env: preset.env || {},
+          url: preset.url || "",
+          description: preset.description || "",
+          toolNames: preset.toolNames || [],
+          isActive: true
+        };
+        const res = await fetch("/api/mcp-servers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          addedServers.push(data.server);
+        }
+      } catch (err) {
+        console.error("Failed to auto-activate preset server:", preset.name, err);
+      }
+    }
+
+    setServers(prev => {
+      const updated = prev.map(s => s.type === "local-stdio" ? { ...s, isActive: true } : s);
+      return [...updated, ...addedServers];
+    });
+
+    notify.success(`Enabled all local stdio servers (activated ${addedServers.length} presets)`);
   };
 
   const handleToggleActive = async (server) => {
@@ -152,6 +251,76 @@ export default function McpServersPageClient() {
     } catch { }
   };
 
+  const handleAddCombo = async (comboData) => {
+    try {
+      const res = await fetch("/api/combos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...comboData, kind: "mcp" }),
+      });
+      if (res.ok) {
+        await fetchCombos();
+        setShowComboModal(false);
+        notify.success("MCP Combo created successfully");
+      } else {
+        const err = await res.json();
+        notify.error(err.error || "Failed to create MCP combo");
+      }
+    } catch (err) {
+      notify.error("Error creating combo");
+    }
+  };
+
+  const handleUpdateCombo = async (id, comboData) => {
+    try {
+      const res = await fetch(`/api/combos/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...comboData, kind: "mcp" }),
+      });
+      if (res.ok) {
+        await fetchCombos();
+        setEditingCombo(null);
+        notify.success("MCP Combo updated successfully");
+      } else {
+        const err = await res.json();
+        notify.error(err.error || "Failed to update MCP combo");
+      }
+    } catch (err) {
+      notify.error("Error updating combo");
+    }
+  };
+
+  const handleDeleteCombo = async (id) => {
+    try {
+      const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setCombos(prev => prev.filter(c => c.id !== id));
+        notify.success("MCP Combo deleted");
+      }
+    } catch (err) {
+      notify.error("Failed to delete combo");
+    }
+  };
+
+  const handleToggleComboActive = async (combo) => {
+    try {
+      const res = await fetch(`/api/combos/${combo.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !combo.isActive }),
+      });
+      if (res.ok) {
+        await fetchCombos();
+        notify.success(combo.isActive ? "MCP Combo disabled" : `MCP Combo "${combo.name}" activated`);
+      } else {
+        notify.error("Failed to toggle combo status");
+      }
+    } catch {
+      notify.error("Error toggling combo status");
+    }
+  };
+
   return (
     <div className="flex w-full flex-col gap-6">
       {/* Header */}
@@ -166,86 +335,276 @@ export default function McpServersPageClient() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" icon="auto_awesome" onClick={() => setShowPresetModal(true)}>
-            Presets
-          </Button>
-          <Button variant="primary" size="sm" icon="add" onClick={() => setShowAddModal(true)}>
-            Add Server
-          </Button>
+          {activeTab === "servers" ? (
+            <>
+              <Button variant="secondary" size="sm" icon="auto_awesome" onClick={() => setShowPresetModal(true)}>
+                Presets
+              </Button>
+              <Button variant="primary" size="sm" icon="add" onClick={() => setShowAddModal(true)}>
+                Add Server
+              </Button>
+            </>
+          ) : (
+            <Button variant="primary" size="sm" icon="add" onClick={() => setShowComboModal(true)}>
+              Create MCP Combo
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Gateway Info */}
-      <div className="rounded-xl bg-surface-1 border border-border-subtle p-4">
-        <div className="flex items-start gap-3">
-          <div className="flex items-center justify-center size-9 rounded-lg bg-brand-500/10 shrink-0 mt-0.5">
-            <span className="material-symbols-outlined text-[18px] text-brand-500">swap_horiz</span>
-          </div>
-          <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-semibold text-text-main">Unified Gateway Endpoint</h3>
-            <p className="text-xs text-text-muted mt-0.5">
-              All active servers are accessible through a single gateway. Configure your MCP client to use:
-            </p>
-            <code className="block mt-2 px-3 py-1.5 rounded-lg bg-surface-2 text-xs font-mono text-brand-400 break-all">
-              {mounted ? `${window.location.origin}/api/mcp-gateway` : "/api/mcp-gateway"}
-            </code>
-            <div className="flex flex-wrap gap-3 mt-2 text-xs text-text-muted">
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">cell_tower</span>
-                SSE: <code className="text-brand-400">/sse</code>
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">send</span>
-                Message: <code className="text-brand-400">/message</code>
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-[14px]">select_all</span>
-                Per-server: <code className="text-brand-400">/[serverId]/...</code>
-              </span>
+      {/* Tabs */}
+      <div className="flex gap-2 border-b border-border-subtle">
+        <button
+          onClick={() => setActiveTab("servers")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+            activeTab === "servers"
+              ? "border-primary text-primary"
+              : "border-transparent text-text-muted hover:text-text-main"
+          }`}
+        >
+          MCP Servers
+        </button>
+        <button
+          onClick={() => setActiveTab("combos")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+            activeTab === "combos"
+              ? "border-primary text-primary"
+              : "border-transparent text-text-muted hover:text-text-main"
+          }`}
+        >
+          MCP Combos
+        </button>
+      </div>
+
+      {/* Servers Tab Content */}
+      {activeTab === "servers" && (
+        <>
+          {/* Warning/Guideline Advisory */}
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 p-4 flex gap-3">
+            <span className="material-symbols-outlined text-amber-500 text-[20px] shrink-0 mt-0.5">warning</span>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-semibold text-amber-400">Environment Advisory for MCP Servers</h4>
+              <p className="text-xs text-text-muted mt-1 leading-relaxed">
+                <strong>Local stdio tools</strong> (command-line/binary processes running on localhost) require running 9Router on a <strong>local host / development machine</strong> for full functionality. 
+                For <strong>VPS or remote deployments</strong>, please configure and use <strong>remote HTTPS / SSE tools</strong> instead, as local stdio processes are not executable/runnable in typical cloud server virtual environments.
+              </p>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Server List */}
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <span className="material-symbols-outlined animate-spin text-2xl text-text-muted">progress_activity</span>
-        </div>
-      ) : servers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 rounded-xl bg-surface-1 border border-border-subtle border-dashed">
-          <div className="flex items-center justify-center size-14 rounded-full bg-surface-2 mb-4">
-            <span className="material-symbols-outlined text-2xl text-text-muted">hub</span>
+          {/* Quick Controls Bar */}
+          <div className="flex flex-col gap-3 p-4 bg-surface-1 border border-border-subtle rounded-xl sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-0.5">
+              <h3 className="font-semibold text-sm">Local Server Quick Controls</h3>
+              <p className="text-xs text-text-muted">
+                Quickly enable or disable all local stdio MCP servers (including auto-activating preset servers).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="pause_circle"
+                onClick={() => handleToggleLocalServers(false)}
+                className="w-full sm:w-auto"
+              >
+                Disable Local stdio
+              </Button>
+              <Button
+                size="sm"
+                icon="play_circle"
+                onClick={() => handleToggleLocalServers(true)}
+                className="w-full sm:w-auto"
+              >
+                Enable Local stdio
+              </Button>
+            </div>
           </div>
-          <h3 className="text-base font-medium text-text-main mb-1">No MCP servers configured</h3>
-          <p className="text-sm text-text-muted mb-4 text-center max-w-md">
-            Add MCP servers to give your AI agents access to tools like web search, file system, GitHub, and more.
-          </p>
-          <div className="flex gap-2">
-            <Button variant="secondary" size="sm" icon="auto_awesome" onClick={() => setShowPresetModal(true)}>
-              Browse Presets
-            </Button>
-            <Button variant="primary" size="sm" icon="add" onClick={() => setShowAddModal(true)}>
-              Add Server
-            </Button>
+
+          {/* Gateway Info */}
+          <div className="rounded-xl bg-surface-1 border border-border-subtle p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex items-center justify-center size-9 rounded-lg bg-brand-500/10 shrink-0 mt-0.5">
+                <span className="material-symbols-outlined text-[18px] text-brand-500">swap_horiz</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-sm font-semibold text-text-main">Unified Gateway Endpoint</h3>
+                <p className="text-xs text-text-muted mt-0.5">
+                  All active servers are accessible through a single gateway. Configure your MCP client to use:
+                </p>
+                <code className="block mt-2 px-3 py-1.5 rounded-lg bg-surface-2 text-xs font-mono text-brand-400 break-all">
+                  {mounted ? `${window.location.origin}/api/mcp-gateway` : "/api/mcp-gateway"}
+                </code>
+                <div className="flex flex-wrap gap-3 mt-2 text-xs text-text-muted">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">cell_tower</span>
+                    SSE: <code className="text-brand-400">/sse</code>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">send</span>
+                    Message: <code className="text-brand-400">/message</code>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">select_all</span>
+                    Per-server: <code className="text-brand-400">/[serverId]/...</code>
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          {servers.map((server) => (
-            <ServerCard
-              key={server.id}
-              server={server}
-              isExpanded={expandedServer === server.id}
-              onToggleExpand={() => setExpandedServer(expandedServer === server.id ? null : server.id)}
-              testingId={testingId}
-              testResult={testResults[server.id]}
-              onTest={handleTest}
-              onToggleActive={handleToggleActive}
-              onEdit={() => setEditingServer(server)}
-              onDelete={() => setDeleteTarget(server)}
-            />
-          ))}
+
+          {/* Server List */}
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <span className="material-symbols-outlined animate-spin text-2xl text-text-muted">progress_activity</span>
+            </div>
+          ) : servers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 rounded-xl bg-surface-1 border border-border-subtle border-dashed">
+              <div className="flex items-center justify-center size-14 rounded-full bg-surface-2 mb-4">
+                <span className="material-symbols-outlined text-2xl text-text-muted">hub</span>
+              </div>
+              <h3 className="text-base font-medium text-text-main mb-1">No MCP servers configured</h3>
+              <p className="text-sm text-text-muted mb-4 text-center max-w-md">
+                Add MCP servers to give your AI agents access to tools like web search, file system, GitHub, and more.
+              </p>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" icon="auto_awesome" onClick={() => setShowPresetModal(true)}>
+                  Browse Presets
+                </Button>
+                <Button variant="primary" size="sm" icon="add" onClick={() => setShowAddModal(true)}>
+                  Add Server
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {servers.map((server) => (
+                <ServerCard
+                  key={server.id}
+                  server={server}
+                  isExpanded={expandedServer === server.id}
+                  onToggleExpand={() => setExpandedServer(expandedServer === server.id ? null : server.id)}
+                  testingId={testingId}
+                  testResult={testResults[server.id]}
+                  onTest={handleTest}
+                  onToggleActive={handleToggleActive}
+                  onEdit={() => setEditingServer(server)}
+                  onDelete={() => setDeleteTarget(server)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Combos Tab Content */}
+      {activeTab === "combos" && (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-text-main">Custom MCP Combos</h3>
+              <p className="text-xs text-text-muted mt-0.5">
+                Limit and customize which tools are exposed to your editor client / IDE. Use `combo=name` parameter.
+              </p>
+            </div>
+          </div>
+
+          {combos.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 rounded-xl bg-surface-1 border border-border-subtle border-dashed">
+              <div className="flex items-center justify-center size-14 rounded-full bg-surface-2 mb-4">
+                <span className="material-symbols-outlined text-2xl text-text-muted">construction</span>
+              </div>
+              <h3 className="text-base font-medium text-text-main mb-1">No MCP Combos configured</h3>
+              <p className="text-sm text-text-muted mb-4 text-center max-w-md">
+                Create a combo to restrict specific tools and expose them selectively to the IDE client.
+              </p>
+              <Button
+                variant="primary"
+                size="sm"
+                icon="add"
+                onClick={() => setShowComboModal(true)}
+              >
+                Create MCP Combo
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {combos.map((combo) => (
+                <div
+                  key={combo.id}
+                  className={`p-4 border rounded-xl flex items-center justify-between gap-4 transition-all duration-200 ${
+                    combo.isActive
+                      ? "bg-surface-1 border-border-subtle hover:border-border"
+                      : "bg-surface-1/50 border-border-subtle/50 opacity-60"
+                  }`}
+                >
+                  {/* Toggle */}
+                  <button
+                    onClick={() => handleToggleComboActive(combo)}
+                    className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
+                      combo.isActive ? "bg-brand-500" : "bg-surface-3"
+                    }`}
+                    title={combo.isActive ? "Disable Combo" : "Enable Combo"}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow transition-transform ${
+                        combo.isActive ? "translate-x-5" : ""
+                      }`}
+                    />
+                  </button>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <code className="text-sm font-semibold font-mono text-brand-400">{combo.name}</code>
+                      {combo.isActive && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                          Active Exposer
+                        </span>
+                      )}
+                      {combo.maxTools !== null && combo.maxTools !== undefined && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 text-text-muted">
+                          Max Tools: {combo.maxTools}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {(!combo.tools || combo.tools.length === 0) ? (
+                        <span className="text-xs text-text-muted italic bg-surface-2 px-2 py-0.5 rounded">
+                          All active tools exposed
+                        </span>
+                      ) : (
+                        combo.tools.map((t) => (
+                          <code
+                            key={t}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-surface-2 font-mono text-text-muted"
+                          >
+                            {t}
+                          </code>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => setEditingCombo(combo)}
+                      className="p-2 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-main transition-colors cursor-pointer"
+                      title="Edit"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">edit</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeleteCombo(combo.id)}
+                      className="p-2 rounded-lg hover:bg-red-500/10 text-text-muted hover:text-red-500 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -276,6 +635,24 @@ export default function McpServersPageClient() {
           server={editingServer}
           onSubmit={handleUpdateServer}
           onClose={() => setEditingServer(null)}
+        />
+      )}
+
+      {/* MCP Combo Modals */}
+      {showComboModal && (
+        <McpComboFormModal
+          isOpen={showComboModal}
+          onClose={() => setShowComboModal(false)}
+          onSave={handleAddCombo}
+        />
+      )}
+
+      {editingCombo && (
+        <McpComboFormModal
+          isOpen={!!editingCombo}
+          combo={editingCombo}
+          onClose={() => setEditingCombo(null)}
+          onSave={(data) => handleUpdateCombo(editingCombo.id, data)}
         />
       )}
 
@@ -679,5 +1056,214 @@ function PresetModal({ onSelect, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
+  const [name, setName] = useState(combo?.name || "");
+  const [maxTools, setMaxTools] = useState(combo?.maxTools !== undefined && combo?.maxTools !== null ? combo.maxTools : "");
+  const [selectedTools, setSelectedTools] = useState(combo?.tools || []);
+  const [availableTools, setAvailableTools] = useState([]);
+  const [toolSearch, setToolSearch] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState("");
+
+  const validateName = (value) => {
+    if (!value.trim()) {
+      setNameError("Name is required");
+      return false;
+    }
+    const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+    if (!VALID_NAME_REGEX.test(value)) {
+      setNameError("Only letters, numbers, -, _ and . allowed");
+      return false;
+    }
+    setNameError("");
+    return true;
+  };
+
+  const handleNameChange = (e) => {
+    const value = e.target.value;
+    setName(value);
+    if (value) validateName(value);
+    else setNameError("");
+  };
+
+  const fetchTools = async () => {
+    try {
+      const toolsRes = await fetch("/api/mcp-gateway/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "mcp-combos-page", method: "tools/list" }),
+      });
+      if (toolsRes.ok) {
+        const toolsData = await toolsRes.json();
+        setAvailableTools(toolsData?.result?.tools || []);
+      }
+    } catch (error) {
+      console.error("Error fetching tools:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) fetchTools();
+  }, [isOpen]);
+
+  const handleSave = async () => {
+    if (!validateName(name)) return;
+    setSaving(true);
+    const maxVal = maxTools === "" ? null : parseInt(maxTools, 10);
+    await onSave({
+      name: name.trim(),
+      tools: selectedTools,
+      maxTools: isNaN(maxVal) ? null : maxVal,
+      models: [], // Empty for MCP combos
+    });
+    setSaving(false);
+  };
+
+  const filteredToolsList = availableTools.filter(t =>
+    t.name.toLowerCase().includes(toolSearch.toLowerCase()) ||
+    (t.description || "").toLowerCase().includes(toolSearch.toLowerCase())
+  );
+
+  const isEdit = !!combo;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? "Edit MCP Combo" : "Create MCP Combo"}>
+      <div className="flex flex-col gap-4">
+        {/* Name */}
+        <div>
+          <Input
+            label="Combo Name"
+            value={name}
+            onChange={handleNameChange}
+            placeholder="my-mcp-combo"
+            error={nameError}
+          />
+          <p className="text-[10px] text-text-muted mt-0.5">
+            Only letters, numbers, -, _ and . allowed. Use this name parameter as `combo=name` in query.
+          </p>
+        </div>
+
+        {/* Max Tools */}
+        <div>
+          <Input
+            label="Max Tools to Expose"
+            type="number"
+            value={maxTools}
+            onChange={(e) => {
+              const val = e.target.value;
+              setMaxTools(val === "" ? "" : parseInt(val, 10));
+            }}
+            placeholder="e.g. 10 (Leave blank for no limit)"
+            min="0"
+          />
+          <p className="text-[10px] text-text-muted mt-0.5">
+            Limit the maximum number of tools returned to the outer IDE.
+          </p>
+        </div>
+
+        {/* Tools Selection */}
+        <div>
+          <label className="text-sm font-medium mb-1.5 block">Exposed MCP Tools</label>
+          <div className="flex flex-col gap-2">
+            <Input
+              value={toolSearch}
+              onChange={(e) => setToolSearch(e.target.value)}
+              placeholder="Search active tools..."
+            />
+
+            {/* List of all active tools with +/- buttons */}
+            <div className="border border-border rounded-lg bg-surface-2 max-h-[200px] overflow-y-auto divide-y divide-border">
+              {availableTools.length === 0 ? (
+                <div className="text-center py-6 text-text-muted text-xs">
+                  No active MCP tools found. Ensure your MCP servers are connected.
+                </div>
+              ) : filteredToolsList.length === 0 ? (
+                <div className="text-center py-6 text-text-muted text-xs">
+                  No tools matching "{toolSearch}"
+                </div>
+              ) : (
+                filteredToolsList.map((tool) => {
+                  const isSelected = selectedTools.includes(tool.name);
+                  return (
+                    <div
+                      key={tool.name}
+                      className="flex items-center justify-between px-3 py-2 text-xs transition-colors"
+                    >
+                      <div className="min-w-0 flex-1 pr-2">
+                        <code className="font-semibold block font-mono text-text-main break-all">{tool.name}</code>
+                        {tool.description && (
+                          <span className="text-[10px] text-text-muted block mt-0.5 line-clamp-2">
+                            {tool.description}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedTools(selectedTools.filter((t) => t !== tool.name));
+                          } else {
+                            setSelectedTools([...selectedTools, tool.name]);
+                          }
+                        }}
+                        className={`p-1.5 rounded-lg flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-red-500/10 text-red-500 hover:bg-red-500/20"
+                            : "bg-brand-500/10 text-brand-400 hover:bg-brand-500/20"
+                        }`}
+                        title={isSelected ? "Remove from Combo" : "Add to Combo"}
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          {isSelected ? "remove" : "add"}
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            
+            {/* Tag/Summary of Selected Tools */}
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              <span className="text-[10px] text-text-muted font-medium w-full">
+                Exposed ({selectedTools.length}):
+              </span>
+              {selectedTools.length === 0 ? (
+                <span className="text-[10px] text-text-muted italic bg-surface-2 px-2 py-0.5 rounded">
+                  All active tools exposed by default
+                </span>
+              ) : (
+                selectedTools.map((tName) => (
+                  <span
+                    key={tName}
+                    className="inline-flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 text-brand-400 px-2 py-0.5 rounded text-[10px]"
+                  >
+                    <code className="font-mono">{tName}</code>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTools(selectedTools.filter(t => t !== tName))}
+                      className="hover:text-red-500 font-bold ml-1 cursor-pointer"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="primary" size="sm" onClick={handleSave} loading={saving} disabled={!name.trim() || !!nameError}>
+            {isEdit ? "Save" : "Create"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

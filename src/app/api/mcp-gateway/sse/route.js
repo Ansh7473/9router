@@ -33,6 +33,10 @@ export async function GET(request) {
     return new Response("No active MCP servers configured", { status: 404 });
   }
 
+  const { searchParams } = new URL(request.url);
+  const comboParam = searchParams.get("combo");
+  const comboQuery = comboParam ? `&combo=${encodeURIComponent(comboParam)}` : "";
+
   const sessionId = crypto.randomUUID();
   const encoder = new TextEncoder();
   let clientConnected = true;
@@ -52,7 +56,7 @@ export async function GET(request) {
 
       // MCP SSE handshake: endpoint first (tells client where to POST), then connected
       // Return endpoint with sessionId query param so clients route POSTs to this session!
-      send(`event: endpoint\ndata: /api/mcp-gateway/message?sessionId=${sessionId}\n\n`);
+      send(`event: endpoint\ndata: /api/mcp-gateway/message?sessionId=${sessionId}${comboQuery}\n\n`);
 
       const serverInfo = servers.map((s) => ({ id: s.id, name: s.name, type: s.type }));
       send(`event: connected\ndata: ${JSON.stringify({ servers: serverInfo })}\n\n`);

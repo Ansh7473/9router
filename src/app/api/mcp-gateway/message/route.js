@@ -1,7 +1,7 @@
 import { getMcpServers, getMcpServerById } from "@/models";
 import { sendToMcpServer, getGatewaySession } from "@/lib/mcp/mcpServerManager";
 import { checkRateLimit } from "@/lib/mcp/rateLimiter";
-import { validateApiKey } from "@/lib/localDb";
+import { validateApiKey, getComboByName, getCombos } from "@/lib/localDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +50,16 @@ export async function POST(request) {
 
     const { searchParams } = new URL(request.url);
     const sessionId = searchParams.get("sessionId");
+    const comboName = searchParams.get("combo");
+
+    // Resolve target combo (explicit parameter takes priority, otherwise use the active database combo)
+    let activeCombo = null;
+    if (comboName) {
+      activeCombo = await getComboByName(comboName);
+    } else {
+      const combos = await getCombos();
+      activeCombo = combos.find(c => c.kind === "mcp" && c.isActive);
+    }
 
     const text = await request.text();
     if (!text || text.trim() === "") {
@@ -101,13 +111,13 @@ export async function POST(request) {
 
     // ─── tools/list aggregation ──────────────────────────────────────────
     if (!__mcpServerId && jsonRpc.method === "tools/list") {
-      const response = await handleToolsList(jsonRpc);
+      const response = await handleToolsList(jsonRpc, activeCombo);
       return await sendResponse(response);
     }
 
     // ─── tools/call auto-routing ─────────────────────────────────────────
     if (!__mcpServerId && jsonRpc.method === "tools/call") {
-      const response = await handleToolsCall(jsonRpc);
+      const response = await handleToolsCall(jsonRpc, activeCombo);
       return await sendResponse(response);
     }
 
@@ -215,7 +225,7 @@ function getServerPrefix(server) {
   return name.slice(0, 3);
 }
 
-async function handleToolsList(jsonRpc) {
+async function handleToolsList(jsonRpc, activeCombo) {
   const servers = await getMcpServers({ isActive: true });
   if (servers.length === 0) {
     return {
@@ -253,19 +263,58 @@ async function handleToolsList(jsonRpc) {
 
   await Promise.all(promises);
 
+  let filteredTools = allTools;
+  if (activeCombo) {
+    if (activeCombo.tools && Array.isArray(activeCombo.tools) && activeCombo.tools.length > 0) {
+      filteredTools = allTools.filter(t => {
+        const originalName = t.name.includes("__") ? t.name.split("__").slice(1).join("__") : t.name;
+        return activeCombo.tools.some(ct => {
+          const normalizedCt = ct.trim();
+          return t.name === normalizedCt || originalName === normalizedCt;
+        });
+      });
+    }
+    if (activeCombo.maxTools !== null && activeCombo.maxTools !== undefined) {
+      const max = parseInt(activeCombo.maxTools, 10);
+      if (!isNaN(max) && max > 0) {
+        filteredTools = filteredTools.slice(0, max);
+      }
+    }
+  }
+
   return {
     jsonrpc: "2.0",
     id: jsonRpc.id,
     result: {
-      tools: allTools,
+      tools: filteredTools,
     },
   };
 }
 
 // ─── Auto-route tools/call by prefix ────────────────────────────────────────
 
-async function handleToolsCall(jsonRpc) {
+async function handleToolsCall(jsonRpc, activeCombo) {
   const toolName = jsonRpc.params?.name || "";
+  if (activeCombo) {
+    if (activeCombo.tools && Array.isArray(activeCombo.tools) && activeCombo.tools.length > 0) {
+      const originalName = toolName.includes("__") ? toolName.split("__").slice(1).join("__") : toolName;
+      const isAllowed = activeCombo.tools.some(ct => {
+        const normalizedCt = ct.trim();
+        return toolName === normalizedCt || originalName === normalizedCt;
+      });
+      if (!isAllowed) {
+        return {
+          jsonrpc: "2.0",
+          id: jsonRpc.id,
+          error: {
+            code: -32601,
+            message: `Tool "${toolName}" is not allowed for combo "${activeCombo.name}".`,
+          },
+        };
+      }
+    }
+  }
+
   const servers = await getMcpServers({ isActive: true });
 
   // Check if tool name has a prefix (e.g. "stitch__create_project" or "Hacker-News__get_stories")
