@@ -279,7 +279,7 @@ const PRESET_SERVERS = [
     type: "local-stdio",
     command: "npx",
     args: ["-y", "pagespeed-insights-mcp"],
-    env: { PAGESPEED_API_KEY: "" },
+    env: { GOOGLE_API_KEY: "" },
     description:
       "Google PageSpeed Insights API auditor for Core Web Vitals, metrics, and screenshots",
   },
