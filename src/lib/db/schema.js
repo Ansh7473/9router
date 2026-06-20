@@ -76,11 +76,15 @@ export const TABLES = {
       id: "TEXT PRIMARY KEY",
       key: "TEXT UNIQUE NOT NULL",
       name: "TEXT",
+      kind: "TEXT DEFAULT 'llm'",
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
     },
-    indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)",
+      "CREATE INDEX IF NOT EXISTS idx_ak_kind ON apiKeys(kind)",
+    ],
   },
   combos: {
     columns: {

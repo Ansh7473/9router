@@ -1,5 +1,11 @@
 import { getMcpServers } from "@/models";
-import { createMcpSSEStream, registerGatewaySession, unregisterGatewaySession } from "@/lib/mcp/mcpServerManager";
+import {
+  createMcpSSEStream,
+  registerGatewaySession,
+  unregisterGatewaySession,
+} from "@/lib/mcp/mcpServerManager";
+import { validateApiKey } from "@/lib/localDb";
+import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,26 +13,57 @@ export const dynamic = "force-dynamic";
 // GET /api/mcp-gateway/sse - Unified SSE stream across all active MCP servers
 // Merges events from all active servers into a single stream.
 // Keeps the connection alive as long as at least one server is streaming.
-// Auth: Accepts Bearer token or X-Api-Key header (validated against stored keys).
-// Also accepts X-9r-Api-Key header for MCP clients.
-import { validateApiKey } from "@/lib/localDb";
+// Auth: ONLY accepts MCP-kind keys (mcp_ prefix), completely separate from v1 API keys (sk- prefix).
 
 export async function GET(request) {
-  // Auth check: accept Bearer token, X-Api-Key, or X-9r-Api-Key
+  // Auth check: MCP gateway ONLY accepts MCP-kind keys (mcp_ prefix)
+  // This is completely separate from v1 API keys (sk- prefix)
+  // Extract token from headers
   const authHeader = request.headers.get("Authorization");
-  const apiKeyHeader = request.headers.get("x-api-key") || request.headers.get("x-9r-api-key");
-  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : apiKeyHeader;
-  if (token) {
-    const valid = await validateApiKey(token);
-    if (!valid) {
-      return new Response(JSON.stringify({ error: "Invalid API key" }), {
+  const apiKeyHeader =
+    request.headers.get("x-api-key") ||
+    request.headers.get("x-9r-api-key") ||
+    request.headers.get("x-mcp-api-key");
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : apiKeyHeader;
+
+  // SECURITY: Token is REQUIRED - fail closed if not provided
+  if (!token) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "Authorization required. Provide MCP API key via Authorization: Bearer <key> or x-api-key header",
+      }),
+      {
         status: 401,
         headers: { "Content-Type": "application/json" },
-      });
-    }
+      },
+    );
   }
-  // If no token provided, allow through (open gateway mode)
-  // The dashboardGuard already whitelists this route
+
+  // Only accept MCP-kind keys for gateway access
+  if (!isMcpApiKey(token)) {
+    return new Response(
+      JSON.stringify({
+        error: "Invalid API key. MCP gateway requires mcp_ prefix keys",
+      }),
+      {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+  const valid = await validateApiKey(token, "mcp");
+  if (!valid) {
+    return new Response(
+      JSON.stringify({ error: "Invalid or inactive MCP API key" }),
+      {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
 
   const servers = await getMcpServers({ isActive: true });
   if (servers.length === 0) {
@@ -35,7 +72,9 @@ export async function GET(request) {
 
   const { searchParams } = new URL(request.url);
   const comboParam = searchParams.get("combo");
-  const comboQuery = comboParam ? `&combo=${encodeURIComponent(comboParam)}` : "";
+  const comboQuery = comboParam
+    ? `&combo=${encodeURIComponent(comboParam)}`
+    : "";
 
   const sessionId = crypto.randomUUID();
   const encoder = new TextEncoder();
@@ -56,10 +95,18 @@ export async function GET(request) {
 
       // MCP SSE handshake: endpoint first (tells client where to POST), then connected
       // Return endpoint with sessionId query param so clients route POSTs to this session!
-      send(`event: endpoint\ndata: /api/mcp-gateway/message?sessionId=${sessionId}${comboQuery}\n\n`);
+      send(
+        `event: endpoint\ndata: /api/mcp-gateway/message?sessionId=${sessionId}${comboQuery}\n\n`,
+      );
 
-      const serverInfo = servers.map((s) => ({ id: s.id, name: s.name, type: s.type }));
-      send(`event: connected\ndata: ${JSON.stringify({ servers: serverInfo })}\n\n`);
+      const serverInfo = servers.map((s) => ({
+        id: s.id,
+        name: s.name,
+        type: s.type,
+      }));
+      send(
+        `event: connected\ndata: ${JSON.stringify({ servers: serverInfo })}\n\n`,
+      );
 
       // Track active streams per server
       const activeReaders = new Map();
@@ -113,7 +160,10 @@ export async function GET(request) {
                     continue;
                   }
                   // Discard initialize requests/notifications
-                  if (json.method === "initialize" || json.method === "notifications/initialized") {
+                  if (
+                    json.method === "initialize" ||
+                    json.method === "notifications/initialized"
+                  ) {
                     continue;
                   }
 
@@ -128,7 +178,9 @@ export async function GET(request) {
           }
         } catch (err) {
           if (clientConnected) {
-            send(`event: error\ndata: ${JSON.stringify({ __mcpServerId: server.id, error: err.message })}\n\n`);
+            send(
+              `event: error\ndata: ${JSON.stringify({ __mcpServerId: server.id, error: err.message })}\n\n`,
+            );
           }
         } finally {
           activeReaders.delete(server.id);
@@ -140,8 +192,12 @@ export async function GET(request) {
 
       // Only close if client is still connected
       if (clientConnected) {
-        send(`event: disconnected\ndata: ${JSON.stringify({ reason: "all servers disconnected" })}\n\n`);
-        try { controller.close(); } catch {}
+        send(
+          `event: disconnected\ndata: ${JSON.stringify({ reason: "all servers disconnected" })}\n\n`,
+        );
+        try {
+          controller.close();
+        } catch {}
       }
     },
     cancel() {

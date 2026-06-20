@@ -372,6 +372,10 @@ export default function McpServersPageClient() {
   const [combos, setCombos] = useState([]);
   const [showComboModal, setShowComboModal] = useState(false);
   const [editingCombo, setEditingCombo] = useState(null);
+  const [mcpApiKeys, setMcpApiKeys] = useState([]);
+  const [showMcpKeyModal, setShowMcpKeyModal] = useState(false);
+  const [newMcpKeyName, setNewMcpKeyName] = useState("");
+  const [creatingMcpKey, setCreatingMcpKey] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -402,10 +406,23 @@ export default function McpServersPageClient() {
     }
   }, []);
 
+  const fetchMcpApiKeys = useCallback(async () => {
+    try {
+      const res = await fetch("/api/mcp-keys");
+      if (res.ok) {
+        const data = await res.json();
+        setMcpApiKeys(data.keys || []);
+      }
+    } catch (error) {
+      console.error("Error fetching MCP API keys:", error);
+    }
+  }, []);
+
   useEffect(() => {
     fetchServers();
     fetchCombos();
-  }, [fetchServers, fetchCombos]);
+    fetchMcpApiKeys();
+  }, [fetchServers, fetchCombos, fetchMcpApiKeys]);
 
   const handleTest = async (server) => {
     setTestingId(server.id);
@@ -591,6 +608,72 @@ export default function McpServersPageClient() {
     }
   };
 
+  const handleCreateMcpKey = async () => {
+    if (!newMcpKeyName.trim()) {
+      notify.error("Please enter a name for the API key");
+      return;
+    }
+    setCreatingMcpKey(true);
+    try {
+      const res = await fetch("/api/mcp-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newMcpKeyName.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        await fetchMcpApiKeys();
+        setShowMcpKeyModal(false);
+        setNewMcpKeyName("");
+        notify.success(`MCP API key created: ${data.key.key}`);
+      } else {
+        const err = await res.json();
+        notify.error(err.error || "Failed to create MCP API key");
+      }
+    } catch (err) {
+      notify.error("Error creating MCP API key");
+    } finally {
+      setCreatingMcpKey(false);
+    }
+  };
+
+  const handleToggleMcpKey = async (key) => {
+    try {
+      const res = await fetch(`/api/mcp-keys/${key.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !key.isActive }),
+      });
+      if (res.ok) {
+        await fetchMcpApiKeys();
+        notify.success(
+          key.isActive ? "MCP API key disabled" : "MCP API key enabled",
+        );
+      } else {
+        notify.error("Failed to toggle MCP API key");
+      }
+    } catch {
+      notify.error("Error toggling MCP API key");
+    }
+  };
+
+  const handleDeleteMcpKey = async (key) => {
+    if (!confirm(`Delete MCP API key "${key.name}"?`)) return;
+    try {
+      const res = await fetch(`/api/mcp-keys/${key.id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        await fetchMcpApiKeys();
+        notify.success("MCP API key deleted");
+      } else {
+        notify.error("Failed to delete MCP API key");
+      }
+    } catch {
+      notify.error("Error deleting MCP API key");
+    }
+  };
+
   return (
     <div className="flex w-full flex-col gap-6">
       {/* Header */}
@@ -627,7 +710,7 @@ export default function McpServersPageClient() {
                 Add Server
               </Button>
             </>
-          ) : (
+          ) : activeTab === "combos" ? (
             <Button
               variant="primary"
               size="sm"
@@ -635,6 +718,15 @@ export default function McpServersPageClient() {
               onClick={() => setShowComboModal(true)}
             >
               Create MCP Combo
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              icon="add"
+              onClick={() => setShowMcpKeyModal(true)}
+            >
+              Create MCP Key
             </Button>
           )}
         </div>
@@ -661,6 +753,16 @@ export default function McpServersPageClient() {
           }`}
         >
           MCP Combos
+        </button>
+        <button
+          onClick={() => setActiveTab("api-keys")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+            activeTab === "api-keys"
+              ? "border-primary text-primary"
+              : "border-transparent text-text-muted hover:text-text-main"
+          }`}
+        >
+          API Keys
         </button>
       </div>
 
@@ -830,6 +932,129 @@ export default function McpServersPageClient() {
             </div>
           )}
         </>
+      )}
+
+      {/* API Keys Tab Content */}
+      {activeTab === "api-keys" && (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-text-main">
+                MCP API Keys
+              </h3>
+              <p className="text-xs text-text-muted mt-0.5">
+                Manage API keys for MCP gateway access. These keys use the mcp_
+                prefix and are separate from v1 API keys.
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              icon="add"
+              onClick={() => setShowMcpKeyModal(true)}
+            >
+              Create MCP Key
+            </Button>
+          </div>
+
+          {mcpApiKeys.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 rounded-xl bg-surface-1 border border-border-subtle border-dashed">
+              <div className="flex items-center justify-center size-14 rounded-full bg-surface-2 mb-4">
+                <span className="material-symbols-outlined text-2xl text-text-muted">
+                  key
+                </span>
+              </div>
+              <h3 className="text-base font-medium text-text-main mb-1">
+                No MCP API Keys
+              </h3>
+              <p className="text-sm text-text-muted mb-4 text-center max-w-md">
+                Create an MCP API key to authenticate requests to the MCP
+                gateway.
+              </p>
+              <Button
+                variant="primary"
+                size="sm"
+                icon="add"
+                onClick={() => setShowMcpKeyModal(true)}
+              >
+                Create MCP Key
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {mcpApiKeys.map((key) => (
+                <div
+                  key={key.id}
+                  className={`p-4 border rounded-xl flex items-center justify-between gap-4 transition-all duration-200 ${
+                    key.isActive
+                      ? "bg-surface-1 border-border-subtle hover:border-border"
+                      : "bg-surface-1/50 border-border-subtle/50 opacity-60"
+                  }`}
+                >
+                  {/* Toggle */}
+                  <button
+                    onClick={() => handleToggleMcpKey(key)}
+                    className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
+                      key.isActive ? "bg-brand-500" : "bg-surface-3"
+                    }`}
+                    title={key.isActive ? "Disable Key" : "Enable Key"}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow transition-transform ${
+                        key.isActive ? "translate-x-5" : ""
+                      }`}
+                    />
+                  </button>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-text-main">
+                        {key.name}
+                      </span>
+                      {key.isActive && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <code className="text-xs px-2 py-1 rounded bg-surface-2 font-mono text-brand-400 break-all">
+                        {key.key}
+                      </code>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(key.key);
+                          notify.success("API key copied to clipboard");
+                        }}
+                        className="p-1 rounded hover:bg-surface-3 text-text-muted hover:text-text-main transition-colors cursor-pointer"
+                        title="Copy to clipboard"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">
+                          content_copy
+                        </span>
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-text-muted mt-1">
+                      Created: {new Date(key.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => handleDeleteMcpKey(key)}
+                      className="p-2 rounded-lg hover:bg-red-500/10 text-text-muted hover:text-red-500 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">
+                        delete
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Combos Tab Content */}
@@ -1018,6 +1243,64 @@ export default function McpServersPageClient() {
         cancelText="Cancel"
         variant="danger"
       />
+
+      {/* Create MCP API Key Modal */}
+      <Modal
+        isOpen={showMcpKeyModal}
+        onClose={() => {
+          setShowMcpKeyModal(false);
+          setNewMcpKeyName("");
+        }}
+        title="Create MCP API Key"
+      >
+        <div className="flex flex-col gap-4">
+          <div>
+            <Input
+              label="Key Name"
+              value={newMcpKeyName}
+              onChange={(e) => setNewMcpKeyName(e.target.value)}
+              placeholder="e.g., Claude Desktop, Cursor IDE"
+            />
+            <p className="text-[10px] text-text-muted mt-0.5">
+              A descriptive name to identify this API key. Use this key to
+              authenticate MCP gateway requests.
+            </p>
+          </div>
+
+          <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+            <p className="text-xs text-blue-400">
+              <strong>Note:</strong> MCP API keys use the{" "}
+              <code className="font-mono bg-surface-2 px-1 rounded">mcp_</code>{" "}
+              prefix and are completely separate from v1 API keys (sk- prefix)
+              used for AI model endpoints.
+            </p>
+          </div>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setShowMcpKeyModal(false);
+                setNewMcpKeyName("");
+              }}
+              disabled={creatingMcpKey}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleCreateMcpKey}
+              loading={creatingMcpKey}
+              disabled={!newMcpKeyName.trim()}
+            >
+              Create
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

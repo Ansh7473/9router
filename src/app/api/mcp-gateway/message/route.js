@@ -1,8 +1,17 @@
 import { getMcpServers, getMcpServerById } from "@/models";
 import { sendToMcpServer, getGatewaySession } from "@/lib/mcp/mcpServerManager";
-import { handleToolsList, handleToolsCall, handlePromptsList, handlePromptsGet, handleResourcesList, handleResourceTemplatesList, handleResourcesRead } from "@/lib/mcp/mcpGatewayHandlers";
+import {
+  handleToolsList,
+  handleToolsCall,
+  handlePromptsList,
+  handlePromptsGet,
+  handleResourcesList,
+  handleResourceTemplatesList,
+  handleResourcesRead,
+} from "@/lib/mcp/mcpGatewayHandlers";
 import { checkRateLimit } from "@/lib/mcp/rateLimiter";
 import { validateApiKey, getComboByName, getCombos } from "@/lib/localDb";
+import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,22 +24,49 @@ export const dynamic = "force-dynamic";
 // Auth: Accepts Bearer token, X-Api-Key, X-9r-Api-Key, or X-Goog-Api-Key headers.
 export async function POST(request) {
   try {
-    // Auth check: accept Bearer token, X-Api-Key, X-9r-Api-Key, or X-Goog-Api-Key
+    // Auth check: MCP gateway ONLY accepts MCP-kind keys (mcp_ prefix)
+    // This is completely separate from v1 API keys (sk- prefix)
+    // Extract token from headers
     const authHeader = request.headers.get("Authorization");
-    const apiKeyHeader = request.headers.get("x-api-key") || request.headers.get("x-9r-api-key") || request.headers.get("x-goog-api-key");
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : apiKeyHeader;
-    if (token) {
-      const valid = await validateApiKey(token);
-      if (!valid) {
-        return Response.json(
-          { error: "Invalid API key" },
-          { status: 401 }
-        );
-      }
+    const apiKeyHeader =
+      request.headers.get("x-api-key") ||
+      request.headers.get("x-9r-api-key") ||
+      request.headers.get("x-mcp-api-key");
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : apiKeyHeader;
+
+    // SECURITY: Token is REQUIRED - fail closed if not provided
+    if (!token) {
+      return Response.json(
+        {
+          error:
+            "Authorization required. Provide MCP API key via Authorization: Bearer <key> or x-api-key header",
+        },
+        { status: 401 },
+      );
+    }
+
+    // Only accept MCP-kind keys for gateway access
+    if (!isMcpApiKey(token)) {
+      return Response.json(
+        { error: "Invalid API key. MCP gateway requires mcp_ prefix keys" },
+        { status: 401 },
+      );
+    }
+    const valid = await validateApiKey(token, "mcp");
+    if (!valid) {
+      return Response.json(
+        { error: "Invalid or inactive MCP API key" },
+        { status: 401 },
+      );
     }
 
     // Rate limit: 60 requests per minute per IP
-    const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+    const ip =
+      request.headers.get("x-forwarded-for") ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
     const rateCheck = checkRateLimit(`mcp:message:${ip}`, {
       maxRequests: 60,
       windowMs: 60_000,
@@ -45,7 +81,7 @@ export async function POST(request) {
             "X-RateLimit-Remaining": String(rateCheck.remaining),
             "X-RateLimit-Reset": String(Date.now() + rateCheck.resetMs),
           },
-        }
+        },
       );
     }
 
@@ -59,7 +95,7 @@ export async function POST(request) {
       activeCombo = await getComboByName(comboName);
     } else {
       const combos = await getCombos();
-      activeCombo = combos.find(c => c.kind === "mcp" && c.isActive);
+      activeCombo = combos.find((c) => c.kind === "mcp" && c.isActive);
     }
 
     const text = await request.text();
@@ -72,8 +108,11 @@ export async function POST(request) {
       body = JSON.parse(text);
     } catch (err) {
       return Response.json(
-        { jsonrpc: "2.0", error: { code: -32700, message: "Parse error: invalid JSON" } },
-        { status: 400 }
+        {
+          jsonrpc: "2.0",
+          error: { code: -32700, message: "Parse error: invalid JSON" },
+        },
+        { status: 400 },
       );
     }
 
@@ -88,20 +127,20 @@ export async function POST(request) {
           protocolVersion: "2024-11-05",
           capabilities: {
             tools: {
-              listChanged: true
+              listChanged: true,
             },
             prompts: {
-              listChanged: true
+              listChanged: true,
             },
             resources: {
-              listChanged: true
-            }
+              listChanged: true,
+            },
           },
           serverInfo: {
             name: "9router-mcp-gateway",
-            version: "1.0.0"
-          }
-        }
+            version: "1.0.0",
+          },
+        },
       };
       return await sendResponse(response);
     }
@@ -157,18 +196,27 @@ export async function POST(request) {
     if (__mcpServerId) {
       server = await getMcpServerById(__mcpServerId);
       if (!server) {
-        return Response.json({ error: `Unknown MCP server: ${__mcpServerId}` }, { status: 404 });
+        return Response.json(
+          { error: `Unknown MCP server: ${__mcpServerId}` },
+          { status: 404 },
+        );
       }
     } else {
       const servers = await getMcpServers({ isActive: true });
       if (servers.length === 0) {
-        return Response.json({ error: "No active MCP servers configured" }, { status: 404 });
+        return Response.json(
+          { error: "No active MCP servers configured" },
+          { status: 404 },
+        );
       }
       server = servers[0];
     }
 
     if (!server.isActive) {
-      return Response.json({ error: "MCP server is disabled" }, { status: 400 });
+      return Response.json(
+        { error: "MCP server is disabled" },
+        { status: 400 },
+      );
     }
 
     const response = await sendToMcpServer(server, jsonRpc);
