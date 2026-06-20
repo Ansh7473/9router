@@ -78,8 +78,11 @@ export function isCodeGraphServer(serverOrPlugin) {
 }
 
 export function ensureCodeGraphInitialized(projectRoot = process.cwd()) {
-  const codegraphDir = path.join(projectRoot, ".codegraph");
-  if (existsSync(codegraphDir)) return;
+  const codegraphDir = path.join(
+    /*turbopackIgnore: true*/ projectRoot,
+    ".codegraph",
+  );
+  if (existsSync(/*turbopackIgnore: true*/ codegraphDir)) return;
 
   console.log(
     `[CodeGraph Auto-Init] .codegraph not found in ${projectRoot}. Running codegraph init...`,
@@ -91,7 +94,7 @@ export function ensureCodeGraphInitialized(projectRoot = process.cwd()) {
       "init",
     ]);
     execFileSync(initSpawn.command, initSpawn.args, {
-      cwd: projectRoot,
+      /*turbopackIgnore: true*/ cwd: projectRoot,
       stdio: "ignore",
     });
     console.log("[CodeGraph Auto-Init] Successfully initialized CodeGraph.");
