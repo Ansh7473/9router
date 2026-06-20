@@ -26,6 +26,7 @@ const PRESET_SERVERS = [
   { name: "Filesystem", type: "local-stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"], description: "Read/write files on local filesystem" },
   { name: "GitHub", type: "local-stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-github"], description: "GitHub API integration" },
   { name: "Browser MCP", type: "local-stdio", command: "npx", args: ["-y", "@browsermcp/mcp@latest"], description: "Control your running Chrome browser" },
+  { name: "CodeGraph", type: "local-stdio", command: "npx", args: ["-y", "@colbymchenry/codegraph", "serve", "--mcp"], description: "Local semantic code intelligence using tree-sitter, SQLite, and AST relationships", toolNames: ["codegraph_explore", "codegraph_node", "codegraph_search", "codegraph_callers", "codegraph_callees", "codegraph_impact", "codegraph_files", "codegraph_status"] },
   { name: "TestSprite", type: "local-stdio", command: "npx", args: ["-y", "@testsprite/testsprite-mcp@latest"], env: { "API_KEY": "" }, description: "Autonomous AI-powered testing assistant for IDEs" },
   { name: "Vercel", type: "remote-http", url: "https://mcp.vercel.com", description: "Deployments, projects, domains, and Vercel analytics management" },
   { name: "Postman", type: "local-stdio", command: "npx", args: ["-y", "@postman/postman-mcp-server"], description: "API development, contract testing, and collection management" },
@@ -130,79 +131,24 @@ export default function McpServersPageClient() {
   };
 
   const handleToggleLocalServers = async (newActive) => {
-    // For disabling:
-    if (!newActive) {
-      const localServers = servers.filter(s => s.type === "local-stdio");
-      if (localServers.length === 0) {
-        notify.info("No local stdio servers configured");
-        return;
-      }
-      await Promise.all(
-        localServers.map(s =>
-          fetch(`/api/mcp-servers/${s.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ isActive: false }),
-          })
-        )
-      );
-      setServers(prev => prev.map(s => s.type === "local-stdio" ? { ...s, isActive: false } : s));
-      notify.success("Disabled all local stdio servers");
+    const localServers = servers.filter(s => s.type === "local-stdio");
+    if (localServers.length === 0) {
+      notify.info("No local stdio servers configured. Please add a local server first.");
       return;
     }
 
-    // For enabling:
-    // 1. Enable all existing local stdio servers in the DB
-    const existingLocals = servers.filter(s => s.type === "local-stdio");
     await Promise.all(
-      existingLocals.map(s =>
+      localServers.map(s =>
         fetch(`/api/mcp-servers/${s.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ isActive: true }),
+          body: JSON.stringify({ isActive: newActive }),
         })
       )
     );
 
-    // 2. Identify all local stdio presets that are NOT currently in the DB
-    const existingNames = new Set(servers.map(s => s.name.toLowerCase()));
-    const presetsToAdd = PRESET_SERVERS.filter(p => p.type === "local-stdio" && !existingNames.has(p.name.toLowerCase()));
-
-    // 3. Add those presets to the DB as active
-    const addedServers = [];
-    for (const preset of presetsToAdd) {
-      try {
-        const formData = {
-          name: preset.name,
-          type: preset.type,
-          command: preset.command || "",
-          args: preset.args || [],
-          env: preset.env || {},
-          url: preset.url || "",
-          description: preset.description || "",
-          toolNames: preset.toolNames || [],
-          isActive: true
-        };
-        const res = await fetch("/api/mcp-servers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(formData),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          addedServers.push(data.server);
-        }
-      } catch (err) {
-        console.error("Failed to auto-activate preset server:", preset.name, err);
-      }
-    }
-
-    setServers(prev => {
-      const updated = prev.map(s => s.type === "local-stdio" ? { ...s, isActive: true } : s);
-      return [...updated, ...addedServers];
-    });
-
-    notify.success(`Enabled all local stdio servers (activated ${addedServers.length} presets)`);
+    setServers(prev => prev.map(s => s.type === "local-stdio" ? { ...s, isActive: newActive } : s));
+    notify.success(`${newActive ? "Enabled" : "Disabled"} all local stdio servers`);
   };
 
   const handleToggleActive = async (server) => {
@@ -356,21 +302,19 @@ export default function McpServersPageClient() {
       <div className="flex gap-2 border-b border-border-subtle">
         <button
           onClick={() => setActiveTab("servers")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
-            activeTab === "servers"
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text-main"
-          }`}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${activeTab === "servers"
+            ? "border-primary text-primary"
+            : "border-transparent text-text-muted hover:text-text-main"
+            }`}
         >
           MCP Servers
         </button>
         <button
           onClick={() => setActiveTab("combos")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
-            activeTab === "combos"
-              ? "border-primary text-primary"
-              : "border-transparent text-text-muted hover:text-text-main"
-          }`}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors cursor-pointer ${activeTab === "combos"
+            ? "border-primary text-primary"
+            : "border-transparent text-text-muted hover:text-text-main"
+            }`}
         >
           MCP Combos
         </button>
@@ -385,7 +329,7 @@ export default function McpServersPageClient() {
             <div className="flex-1 min-w-0">
               <h4 className="text-sm font-semibold text-amber-400">Environment Advisory for MCP Servers</h4>
               <p className="text-xs text-text-muted mt-1 leading-relaxed">
-                <strong>Local stdio tools</strong> (command-line/binary processes running on localhost) require running 9Router on a <strong>local host / development machine</strong> for full functionality. 
+                <strong>Local stdio tools</strong> (command-line/binary processes running on localhost) require running 9Router on a <strong>local host / development machine</strong> for full functionality.
                 For <strong>VPS or remote deployments</strong>, please configure and use <strong>remote HTTPS / SSE tools</strong> instead, as local stdio processes are not executable/runnable in typical cloud server virtual environments.
               </p>
             </div>
@@ -396,7 +340,7 @@ export default function McpServersPageClient() {
             <div className="flex flex-col gap-0.5">
               <h3 className="font-semibold text-sm">Local Server Quick Controls</h3>
               <p className="text-xs text-text-muted">
-                Quickly enable or disable all local stdio MCP servers (including auto-activating preset servers).
+                Quickly enable or disable all local stdio MCP servers that you have added.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -531,24 +475,21 @@ export default function McpServersPageClient() {
               {combos.map((combo) => (
                 <div
                   key={combo.id}
-                  className={`p-4 border rounded-xl flex items-center justify-between gap-4 transition-all duration-200 ${
-                    combo.isActive
-                      ? "bg-surface-1 border-border-subtle hover:border-border"
-                      : "bg-surface-1/50 border-border-subtle/50 opacity-60"
-                  }`}
+                  className={`p-4 border rounded-xl flex items-center justify-between gap-4 transition-all duration-200 ${combo.isActive
+                    ? "bg-surface-1 border-border-subtle hover:border-border"
+                    : "bg-surface-1/50 border-border-subtle/50 opacity-60"
+                    }`}
                 >
                   {/* Toggle */}
                   <button
                     onClick={() => handleToggleComboActive(combo)}
-                    className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
-                      combo.isActive ? "bg-brand-500" : "bg-surface-3"
-                    }`}
+                    className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${combo.isActive ? "bg-brand-500" : "bg-surface-3"
+                      }`}
                     title={combo.isActive ? "Disable Combo" : "Enable Combo"}
                   >
                     <span
-                      className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow transition-transform ${
-                        combo.isActive ? "translate-x-5" : ""
-                      }`}
+                      className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow transition-transform ${combo.isActive ? "translate-x-5" : ""
+                        }`}
                     />
                   </button>
 
@@ -683,7 +624,7 @@ function ServerCard({ server, isExpanded, onToggleExpand, testingId, testResult,
       <div className="flex items-center gap-3 px-4 py-3">
         {/* Toggle */}
         <button
-          onClick={() => onToggleActive()}
+          onClick={() => onToggleActive(server)}
           className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${server.isActive ? "bg-brand-500" : "bg-surface-3"}`}
         >
           <span className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow transition-transform ${server.isActive ? "translate-x-5" : ""}`} />
@@ -900,8 +841,8 @@ function ServerFormModal({ title, server, onSubmit, onClose }) {
                   type="button"
                   onClick={() => setType(t.id)}
                   className={`flex flex-col items-center gap-1 p-3 rounded-lg border transition-all cursor-pointer ${type === t.id
-                      ? "border-brand-500 bg-brand-500/10 text-brand-500"
-                      : "border-border bg-surface-2 text-text-muted hover:border-border hover:text-text-main"
+                    ? "border-brand-500 bg-brand-500/10 text-brand-500"
+                    : "border-border bg-surface-2 text-text-muted hover:border-border hover:text-text-main"
                     }`}
                 >
                   <span className="material-symbols-outlined text-[18px]">{t.icon}</span>
@@ -1209,11 +1150,10 @@ function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
                             setSelectedTools([...selectedTools, tool.name]);
                           }
                         }}
-                        className={`p-1.5 rounded-lg flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
-                          isSelected
-                            ? "bg-red-500/10 text-red-500 hover:bg-red-500/20"
-                            : "bg-brand-500/10 text-brand-400 hover:bg-brand-500/20"
-                        }`}
+                        className={`p-1.5 rounded-lg flex items-center justify-center shrink-0 transition-colors cursor-pointer ${isSelected
+                          ? "bg-red-500/10 text-red-500 hover:bg-red-500/20"
+                          : "bg-brand-500/10 text-brand-400 hover:bg-brand-500/20"
+                          }`}
                         title={isSelected ? "Remove from Combo" : "Add to Combo"}
                       >
                         <span className="material-symbols-outlined text-[16px]">
@@ -1225,7 +1165,7 @@ function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
                 })
               )}
             </div>
-            
+
             {/* Tag/Summary of Selected Tools */}
             <div className="flex flex-wrap gap-1.5 mt-1">
               <span className="text-[10px] text-text-muted font-medium w-full">

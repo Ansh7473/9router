@@ -55,6 +55,23 @@ const LOCAL_STDIO_PLUGINS = [
     args: ["-y", "@browsermcp/mcp@latest"],
     toolNames: ["browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_screenshot", "browser_get_console_logs", "browser_wait", "browser_press_key", "browser_go_back", "browser_go_forward"],
   },
+  {
+    name: "codegraph",
+    title: "CodeGraph",
+    description: "Local semantic code intelligence using tree-sitter, SQLite, and ASTs.",
+    command: "npx",
+    args: ["-y", "@colbymchenry/codegraph", "serve", "--mcp"],
+    toolNames: [
+      "codegraph_explore",
+      "codegraph_node",
+      "codegraph_search",
+      "codegraph_callers",
+      "codegraph_callees",
+      "codegraph_impact",
+      "codegraph_files",
+      "codegraph_status"
+    ],
+  },
 ];
 
 function buildManagedMcpServers(plugins) {

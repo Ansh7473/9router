@@ -127,6 +127,24 @@ function getOrSpawn(name) {
   const plugin = findPlugin(name);
   if (!plugin) throw new Error(`Unknown local plugin: ${name}`);
 
+  const isCodeGraph = plugin.command === "codegraph" || name === "codegraph" || (plugin.command === "npx" && Array.isArray(plugin.args) && plugin.args.includes("@colbymchenry/codegraph"));
+  if (isCodeGraph) {
+    const fs = require("fs");
+    const path = require("path");
+    const projectRoot = process.cwd();
+    const codegraphDir = path.join(projectRoot, ".codegraph");
+    if (!fs.existsSync(codegraphDir)) {
+      console.log(`[CodeGraph Auto-Init] .codegraph not found in ${projectRoot}. Running codegraph init...`);
+      try {
+        const { execSync } = require("child_process");
+        execSync("npx -y @colbymchenry/codegraph init", { cwd: projectRoot });
+        console.log("[CodeGraph Auto-Init] Successfully initialized CodeGraph.");
+      } catch (err) {
+        console.error("[CodeGraph Auto-Init] Failed to run codegraph init:", err);
+      }
+    }
+  }
+
   const startTime = Date.now();
   const proc = spawn(plugin.command, plugin.args, { stdio: ["pipe", "pipe", "pipe"], env: process.env });
   entry = { proc, sessions: new Map(), buffer: "", startTime, idleTimer: null };

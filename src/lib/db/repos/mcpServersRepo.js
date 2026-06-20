@@ -112,6 +112,24 @@ export async function testMcpServer(id) {
   try {
     if (server.type === "local-stdio") {
       const { spawn } = await import("child_process");
+      const isCodeGraph = server.command === "codegraph" || server.name === "CodeGraph" || (server.command === "npx" && Array.isArray(server.args) && server.args.includes("@colbymchenry/codegraph"));
+      if (isCodeGraph) {
+        const fs = require("fs");
+        const path = require("path");
+        const projectRoot = process.cwd();
+        const codegraphDir = path.join(projectRoot, ".codegraph");
+        if (!fs.existsSync(codegraphDir)) {
+          console.log(`[CodeGraph Auto-Init] .codegraph not found in ${projectRoot}. Running codegraph init...`);
+          try {
+            const { execSync } = require("child_process");
+            execSync("npx -y @colbymchenry/codegraph init", { cwd: projectRoot });
+            console.log("[CodeGraph Auto-Init] Successfully initialized CodeGraph.");
+          } catch (err) {
+            console.error("[CodeGraph Auto-Init] Failed to run codegraph init:", err);
+          }
+        }
+      }
+
       return await new Promise((resolve) => {
         const proc = spawn(server.command, server.args || [], {
           stdio: ["pipe", "pipe", "pipe"],

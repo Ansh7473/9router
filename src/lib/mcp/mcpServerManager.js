@@ -36,7 +36,7 @@ const sessionManager = new SessionLifetimeManager("mcp-server", {
 sessionManager.startCleanupTimer((sessionId, session) => {
   console.log(`[mcp-server-manager] Cleaning up expired session ${sessionId} for server ${session.serverId}`);
   if (session.transport?.close) {
-    session.transport.close().catch(() => {});
+    session.transport.close().catch(() => { });
   }
 });
 
@@ -258,6 +258,24 @@ function spawnLocalServer(server) {
     );
   }
 
+  const isCodeGraph = server.command === "codegraph" || server.name === "CodeGraph" || (server.command === "npx" && Array.isArray(server.args) && server.args.includes("@colbymchenry/codegraph"));
+  if (isCodeGraph) {
+    const fs = require("fs");
+    const path = require("path");
+    const projectRoot = process.cwd();
+    const codegraphDir = path.join(projectRoot, ".codegraph");
+    if (!fs.existsSync(codegraphDir)) {
+      console.log(`[CodeGraph Auto-Init] .codegraph not found in ${projectRoot}. Running codegraph init...`);
+      try {
+        const { execSync } = require("child_process");
+        execSync("npx -y @colbymchenry/codegraph init", { cwd: projectRoot });
+        console.log("[CodeGraph Auto-Init] Successfully initialized CodeGraph.");
+      } catch (err) {
+        console.error("[CodeGraph Auto-Init] Failed to run codegraph init:", err);
+      }
+    }
+  }
+
   const commandStartTime = Date.now();
 
   const proc = spawn(server.command, server.args || [], {
@@ -285,10 +303,10 @@ function spawnLocalServer(server) {
           resolve(json);
           continue;
         }
-      } catch (e) {}
+      } catch (e) { }
 
       for (const send of entry.sessions.values()) {
-        try { send(`event: message\ndata: ${raw}\n\n`); } catch {}
+        try { send(`event: message\ndata: ${raw}\n\n`); } catch { }
       }
     }
   });
@@ -298,7 +316,7 @@ function spawnLocalServer(server) {
     if (!msg) return;
     console.log(`[mcp-stdio:${server.name}] stderr:`, msg);
     for (const send of entry.sessions.values()) {
-      try { send(`event: stderr\ndata: ${JSON.stringify({ server: server.name, message: msg })}\n\n`); } catch {}
+      try { send(`event: stderr\ndata: ${JSON.stringify({ server: server.name, message: msg })}\n\n`); } catch { }
     }
   });
 
@@ -320,7 +338,7 @@ function spawnLocalServer(server) {
 
     // Notify sessions
     for (const send of entry.sessions.values()) {
-      try { send(`event: process_exit\ndata: ${JSON.stringify({ server: server.name, code, signal })}\n\n`); } catch {}
+      try { send(`event: process_exit\ndata: ${JSON.stringify({ server: server.name, code, signal })}\n\n`); } catch { }
     }
   });
 
@@ -404,7 +422,7 @@ function createMcpSSEStream(server, onMessage) {
     const stream = new ReadableStream({
       start(controller) {
         const send = (chunk) => {
-          try { controller.enqueue(encoder.encode(chunk)); } catch {}
+          try { controller.enqueue(encoder.encode(chunk)); } catch { }
         };
         sid = registerStdioSession(server.id, send);
 
