@@ -1,33 +1,30 @@
-import { validateApiKey, createMcpServer, testMcpServer, updateMcpServer, sanitizeMcpServer } from "@/models";
+import {
+  createMcpServer,
+  testMcpServer,
+  updateMcpServer,
+  sanitizeMcpServer,
+} from "@/models";
 import { checkRateLimit } from "@/lib/mcp/rateLimiter";
+import {
+  hasDashboardOrCliAuth,
+  unauthorizedResponse,
+} from "@/lib/auth/dashboardApiAuth";
+import { validateLocalStdioServer } from "@/lib/mcp/localStdioSecurity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request) {
   try {
-    // 1. Authenticate Request (Bearer token, x-api-key, x-9r-api-key, x-goog-api-key)
-    const authHeader = request.headers.get("Authorization");
-    const apiKeyHeader = request.headers.get("x-api-key") || request.headers.get("x-9r-api-key") || request.headers.get("x-goog-api-key");
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : apiKeyHeader;
-
-    if (!token) {
-      return Response.json(
-        { error: "unauthorized", message: "API key or Bearer token is required" },
-        { status: 401 }
-      );
-    }
-
-    const valid = await validateApiKey(token);
-    if (!valid) {
-      return Response.json(
-        { error: "forbidden", message: "Invalid API key" },
-        { status: 403 }
-      );
+    if (!(await hasDashboardOrCliAuth(request))) {
+      return unauthorizedResponse();
     }
 
     // 2. Rate Limit (60 requests per minute per IP for registration)
-    const ip = request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown";
+    const ip =
+      request.headers.get("x-forwarded-for") ||
+      request.headers.get("x-real-ip") ||
+      "unknown";
     const rateCheck = checkRateLimit(`mcp:servers:register:${ip}`, {
       maxRequests: 60,
       windowMs: 60 * 1000,
@@ -35,8 +32,11 @@ export async function POST(request) {
 
     if (!rateCheck.allowed) {
       return Response.json(
-        { error: "rate_limit_exceeded", message: "Too many requests. Please try again later." },
-        { status: 429 }
+        {
+          error: "rate_limit_exceeded",
+          message: "Too many requests. Please try again later.",
+        },
+        { status: 429 },
       );
     }
 
@@ -47,17 +47,31 @@ export async function POST(request) {
     } catch (err) {
       return Response.json(
         { error: "invalid_request", message: "Invalid JSON body payload" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    const { name, type, url, command, args, env, headers, description, isActive } = body;
+    const {
+      name,
+      type,
+      url,
+      command,
+      args,
+      env,
+      headers,
+      description,
+      isActive,
+    } = body;
 
     // Validate name
     if (!name || typeof name !== "string" || name.trim() === "") {
       return Response.json(
-        { error: "invalid_request", message: "Parameter 'name' is required and must be a non-empty string" },
-        { status: 400 }
+        {
+          error: "invalid_request",
+          message:
+            "Parameter 'name' is required and must be a non-empty string",
+        },
+        { status: 400 },
       );
     }
 
@@ -65,23 +79,47 @@ export async function POST(request) {
     const validTypes = ["remote-http", "remote-sse", "local-stdio"];
     if (!type || !validTypes.includes(type)) {
       return Response.json(
-        { error: "invalid_request", message: `Parameter 'type' must be one of: ${validTypes.join(", ")}` },
-        { status: 400 }
+        {
+          error: "invalid_request",
+          message: `Parameter 'type' must be one of: ${validTypes.join(", ")}`,
+        },
+        { status: 400 },
       );
     }
 
     // Validate type-specific params
-    if ((type === "remote-http" || type === "remote-sse") && (!url || typeof url !== "string" || url.trim() === "")) {
+    if (
+      (type === "remote-http" || type === "remote-sse") &&
+      (!url || typeof url !== "string" || url.trim() === "")
+    ) {
       return Response.json(
-        { error: "invalid_request", message: "Parameter 'url' is required for remote server types" },
-        { status: 400 }
+        {
+          error: "invalid_request",
+          message: "Parameter 'url' is required for remote server types",
+        },
+        { status: 400 },
       );
     }
 
-    if (type === "local-stdio" && (!command || typeof command !== "string" || command.trim() === "")) {
+    if (
+      type === "local-stdio" &&
+      (!command || typeof command !== "string" || command.trim() === "")
+    ) {
       return Response.json(
-        { error: "invalid_request", message: "Parameter 'command' is required for local-stdio server type" },
-        { status: 400 }
+        {
+          error: "invalid_request",
+          message:
+            "Parameter 'command' is required for local-stdio server type",
+        },
+        { status: 400 },
+      );
+    }
+
+    const validation = validateLocalStdioServer({ type, command, args, env });
+    if (!validation.ok) {
+      return Response.json(
+        { error: "invalid_request", message: validation.error },
+        { status: 400 },
       );
     }
 
@@ -132,14 +170,13 @@ export async function POST(request) {
         server: sanitizeMcpServer(updatedServer),
         connectivity,
       },
-      { status: 201 }
+      { status: 201 },
     );
-
   } catch (err) {
     console.error("[mcp-gateway] Server registration error:", err);
     return Response.json(
       { error: "internal_server_error", message: err.message },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

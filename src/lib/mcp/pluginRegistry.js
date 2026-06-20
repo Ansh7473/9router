@@ -8,7 +8,9 @@
  * for plugin resolution in stdio bridges and MCP server manager.
  */
 
-const { LOCAL_STDIO_PLUGINS } = require("@/shared/constants/coworkPlugins");
+import coworkPlugins from "@/shared/constants/coworkPlugins";
+
+const { LOCAL_STDIO_PLUGINS } = coworkPlugins;
 
 /**
  * Find a plugin by name from the preset stdio plugins.
@@ -27,4 +29,4 @@ function listPlugins() {
   return [...LOCAL_STDIO_PLUGINS];
 }
 
-module.exports = { findPlugin, listPlugins };
+export { findPlugin, listPlugins };

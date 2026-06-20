@@ -1,6 +1,6 @@
 import { getMcpServers } from "@/models";
 import { getServerManagerStatus } from "@/lib/mcp/mcpServerManager";
-const bridge = require("@/lib/mcp/stdioSseBridge");
+import { getStatus as getBridgeStatus } from "@/lib/mcp/stdioSseBridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const servers = await getMcpServers();
   const managerStatus = getServerManagerStatus();
-  const bridgeStatus = bridge.getStatus();
+  const bridgeStatus = getBridgeStatus();
 
   return Response.json({
     servers: servers.map((s) => ({

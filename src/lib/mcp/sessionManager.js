@@ -1,7 +1,6 @@
 /**
  * MCP Session Lifetime Manager
  *
- * Adapted from MetaMCP's session-lifetime-manager.ts.
  * Tracks sessions with timestamps, supports expiry checks,
  * and periodic cleanup of stale sessions.
  *
@@ -27,8 +26,10 @@ const getStore = () => {
 class SessionLifetimeManager {
   constructor(name = "mcp", options = {}) {
     this.name = name;
-    this.sessionLifetime = options.sessionLifetime || DEFAULT_SESSION_LIFETIME_MS;
-    this.cleanupInterval = options.cleanupInterval || DEFAULT_CLEANUP_INTERVAL_MS;
+    this.sessionLifetime =
+      options.sessionLifetime || DEFAULT_SESSION_LIFETIME_MS;
+    this.cleanupInterval =
+      options.cleanupInterval || DEFAULT_CLEANUP_INTERVAL_MS;
   }
 
   addSession(sessionId, session) {
@@ -97,14 +98,17 @@ class SessionLifetimeManager {
 
     if (expiredSessions.length > 0) {
       console.log(
-        `[mcp-session:${this.name}] Cleaning up ${expiredSessions.length} expired session(s): ${expiredSessions.map((s) => s.sessionId).join(", ")}`
+        `[mcp-session:${this.name}] Cleaning up ${expiredSessions.length} expired session(s): ${expiredSessions.map((s) => s.sessionId).join(", ")}`,
       );
       for (const { sessionId, session } of expiredSessions) {
         this.removeSession(sessionId);
         try {
           cleanupCallback(sessionId, session);
         } catch (err) {
-          console.error(`[mcp-session:${this.name}] Error cleaning up session ${sessionId}:`, err);
+          console.error(
+            `[mcp-session:${this.name}] Error cleaning up session ${sessionId}:`,
+            err,
+          );
         }
       }
     }
@@ -116,7 +120,9 @@ class SessionLifetimeManager {
     store.cleanupTimer = setInterval(() => {
       this.cleanupExpiredSessions(cleanupCallback);
     }, this.cleanupInterval);
-    console.log(`[mcp-session:${this.name}] Cleanup timer started (interval: ${this.cleanupInterval}ms)`);
+    console.log(
+      `[mcp-session:${this.name}] Cleanup timer started (interval: ${this.cleanupInterval}ms)`,
+    );
   }
 
   stopCleanupTimer() {
@@ -136,4 +142,4 @@ class SessionLifetimeManager {
   }
 }
 
-module.exports = { SessionLifetimeManager };
+export { SessionLifetimeManager };

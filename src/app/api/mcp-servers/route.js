@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMcpServers, createMcpServer, sanitizeMcpServer } from "@/models";
+import { validateLocalStdioServer } from "@/lib/mcp/localStdioSecurity";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,10 @@ export async function GET() {
     return NextResponse.json({ servers: servers.map(sanitizeMcpServer) });
   } catch (error) {
     console.error("Error fetching MCP servers:", error);
-    return NextResponse.json({ error: "Failed to fetch MCP servers" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to fetch MCP servers" },
+      { status: 500 },
+    );
   }
 }
 
@@ -18,7 +22,17 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, type, url, command, args, env, headers, description, toolNames } = body;
+    const {
+      name,
+      type,
+      url,
+      command,
+      args,
+      env,
+      headers,
+      description,
+      toolNames,
+    } = body;
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -26,15 +40,29 @@ export async function POST(request) {
 
     const validTypes = ["remote-http", "remote-sse", "local-stdio"];
     if (type && !validTypes.includes(type)) {
-      return NextResponse.json({ error: `Invalid type. Must be one of: ${validTypes.join(", ")}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `Invalid type. Must be one of: ${validTypes.join(", ")}` },
+        { status: 400 },
+      );
     }
 
     if ((type === "remote-http" || type === "remote-sse") && !url) {
-      return NextResponse.json({ error: "URL is required for remote servers" }, { status: 400 });
+      return NextResponse.json(
+        { error: "URL is required for remote servers" },
+        { status: 400 },
+      );
     }
 
     if (type === "local-stdio" && !command) {
-      return NextResponse.json({ error: "Command is required for local stdio servers" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Command is required for local stdio servers" },
+        { status: 400 },
+      );
+    }
+
+    const validation = validateLocalStdioServer({ type, command, args, env });
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
     const server = await createMcpServer({
@@ -49,9 +77,15 @@ export async function POST(request) {
       toolNames: toolNames || [],
     });
 
-    return NextResponse.json({ server: sanitizeMcpServer(server) }, { status: 201 });
+    return NextResponse.json(
+      { server: sanitizeMcpServer(server) },
+      { status: 201 },
+    );
   } catch (error) {
     console.error("Error creating MCP server:", error);
-    return NextResponse.json({ error: "Failed to create MCP server" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to create MCP server" },
+      { status: 500 },
+    );
   }
 }

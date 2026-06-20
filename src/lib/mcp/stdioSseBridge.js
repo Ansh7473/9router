@@ -1,11 +1,15 @@
 // Inline stdio<->SSE bridge for MCP. Spawns one child per plugin on demand,
 // broadcasts JSON-RPC frames over SSE, accepts client messages via HTTP POST.
 
-const { spawn } = require("child_process");
-const crypto = require("crypto");
-// Use the plugin registry instead of hardcoded constants
-const { findPlugin: findPluginInRegistry } = require("./pluginRegistry");
-const { SessionLifetimeManager } = require("./sessionManager");
+import { spawn } from "child_process";
+import crypto from "crypto";
+import { findPlugin as findPluginInRegistry } from "./pluginRegistry.js";
+import { SessionLifetimeManager } from "./sessionManager.js";
+import {
+  ensureCodeGraphInitialized,
+  isCodeGraphServer,
+  resolveLocalStdioSpawn,
+} from "./localStdioSecurity.js";
 
 const G_KEY = "__9routerMcpBridges";
 const MAX_TEXT_CHARS = 50000;
@@ -36,23 +40,47 @@ function collapseRepeated(text) {
   while (i < lines.length) {
     const line = lines[i];
     const m = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-    if (!m) { out.push(line); i++; continue; }
+    if (!m) {
+      out.push(line);
+      i++;
+      continue;
+    }
     const indent = m[1];
     const role = m[2];
     let j = i;
     while (j < lines.length) {
       const ln = lines[j];
       const mm = ln.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-      if (mm && mm[1] === indent && mm[2] === role) { j++; continue; }
-      if (ln.startsWith(`${indent} `) || ln.startsWith(`${indent}\t`)) { j++; continue; }
+      if (mm && mm[1] === indent && mm[2] === role) {
+        j++;
+        continue;
+      }
+      if (ln.startsWith(`${indent} `) || ln.startsWith(`${indent}\t`)) {
+        j++;
+        continue;
+      }
       break;
     }
     const groupLen = j - i;
     if (groupLen >= COLLAPSE_THRESHOLD) {
-      const headEnd = findNthSiblingEnd(lines, i, indent, role, COLLAPSE_KEEP_HEAD);
-      const tailStart = findLastNSiblingStart(lines, j, indent, role, COLLAPSE_KEEP_TAIL);
+      const headEnd = findNthSiblingEnd(
+        lines,
+        i,
+        indent,
+        role,
+        COLLAPSE_KEEP_HEAD,
+      );
+      const tailStart = findLastNSiblingStart(
+        lines,
+        j,
+        indent,
+        role,
+        COLLAPSE_KEEP_TAIL,
+      );
       for (let k = i; k < headEnd; k++) out.push(lines[k]);
-      out.push(`${indent}... [${groupLen - COLLAPSE_KEEP_HEAD - COLLAPSE_KEEP_TAIL} similar "${role}" items omitted by 9router bridge]`);
+      out.push(
+        `${indent}... [${groupLen - COLLAPSE_KEEP_HEAD - COLLAPSE_KEEP_TAIL} similar "${role}" items omitted by 9router bridge]`,
+      );
       for (let k = tailStart; k < j; k++) out.push(lines[k]);
     } else {
       for (let k = i; k < j; k++) out.push(lines[k]);
@@ -93,11 +121,16 @@ function filterFrame(line) {
     for (const item of content) {
       if (item?.type === "text" && typeof item.text === "string") {
         const filtered = smartFilterText(item.text);
-        if (filtered !== item.text) { item.text = filtered; mutated = true; }
+        if (filtered !== item.text) {
+          item.text = filtered;
+          mutated = true;
+        }
       }
     }
     return mutated ? JSON.stringify(msg) : line;
-  } catch { return line; }
+  } catch {
+    return line;
+  }
 }
 const getStore = () => {
   if (!globalThis[G_KEY]) globalThis[G_KEY] = new Map();
@@ -127,26 +160,16 @@ function getOrSpawn(name) {
   const plugin = findPlugin(name);
   if (!plugin) throw new Error(`Unknown local plugin: ${name}`);
 
-  const isCodeGraph = plugin.command === "codegraph" || name === "codegraph" || (plugin.command === "npx" && Array.isArray(plugin.args) && plugin.args.includes("@colbymchenry/codegraph"));
-  if (isCodeGraph) {
-    const fs = require("fs");
-    const path = require("path");
-    const projectRoot = process.cwd();
-    const codegraphDir = path.join(projectRoot, ".codegraph");
-    if (!fs.existsSync(codegraphDir)) {
-      console.log(`[CodeGraph Auto-Init] .codegraph not found in ${projectRoot}. Running codegraph init...`);
-      try {
-        const { execSync } = require("child_process");
-        execSync("npx -y @colbymchenry/codegraph init", { cwd: projectRoot });
-        console.log("[CodeGraph Auto-Init] Successfully initialized CodeGraph.");
-      } catch (err) {
-        console.error("[CodeGraph Auto-Init] Failed to run codegraph init:", err);
-      }
-    }
+  if (isCodeGraphServer(plugin)) {
+    ensureCodeGraphInitialized();
   }
 
   const startTime = Date.now();
-  const proc = spawn(plugin.command, plugin.args, { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+  const spawnConfig = resolveLocalStdioSpawn(plugin.command, plugin.args || []);
+  const proc = spawn(spawnConfig.command, spawnConfig.args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: process.env,
+  });
   entry = { proc, sessions: new Map(), buffer: "", startTime, idleTimer: null };
   store.set(name, entry);
 
@@ -160,7 +183,11 @@ function getOrSpawn(name) {
       if (!raw) continue;
       const line = filterFrame(raw);
       for (const send of entry.sessions.values()) {
-        try { send(`event: message\ndata: ${line}\n\n`); } catch { /* ignore broken pipe */ }
+        try {
+          send(`event: message\ndata: ${line}\n\n`);
+        } catch {
+          /* ignore broken pipe */
+        }
       }
     }
     resetIdleTimer(name, entry);
@@ -172,7 +199,11 @@ function getOrSpawn(name) {
     console.log(`[mcp:${name}] stderr:`, msg);
     // Notify all sessions of stderr
     for (const send of entry.sessions.values()) {
-      try { send(`event: stderr\ndata: ${JSON.stringify({ plugin: name, message: msg })}\n\n`); } catch {}
+      try {
+        send(
+          `event: stderr\ndata: ${JSON.stringify({ plugin: name, message: msg })}\n\n`,
+        );
+      } catch {}
     }
   });
 
@@ -183,15 +214,23 @@ function getOrSpawn(name) {
 
   proc.on("exit", (code, signal) => {
     const runtime = Date.now() - startTime;
-    console.log(`[mcp:${name}] exited code=${code} signal=${signal} runtime=${runtime}ms`);
+    console.log(
+      `[mcp:${name}] exited code=${code} signal=${signal} runtime=${runtime}ms`,
+    );
     cleanupEntry(name, entry);
     // Notify sessions
     for (const send of entry.sessions.values()) {
-      try { send(`event: process_exit\ndata: ${JSON.stringify({ plugin: name, code, signal })}\n\n`); } catch {}
+      try {
+        send(
+          `event: process_exit\ndata: ${JSON.stringify({ plugin: name, code, signal })}\n\n`,
+        );
+      } catch {}
     }
   });
 
-  console.log(`[mcp:${name}] spawned (command: ${plugin.command} ${(plugin.args || []).join(" ")})`);
+  console.log(
+    `[mcp:${name}] spawned (command: ${plugin.command} ${(plugin.args || []).join(" ")})`,
+  );
   startIdleTimer(name, entry);
   return entry;
 }
@@ -206,7 +245,9 @@ function startIdleTimer(name, entry) {
       killEntry(name, entry);
     } else {
       // Has active sessions, skip idle kill but log
-      console.log(`[mcp:${name}] idle timeout but has ${entry.sessions.size} active session(s), skipping`);
+      console.log(
+        `[mcp:${name}] idle timeout but has ${entry.sessions.size} active session(s), skipping`,
+      );
     }
   }, IDLE_TIMEOUT_MS);
 }
@@ -225,11 +266,15 @@ function clearIdleTimer(_name, entry) {
 function killEntry(name, entry) {
   clearIdleTimer(name, entry);
   if (entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
-    try { entry.proc.kill("SIGTERM"); } catch {}
+    try {
+      entry.proc.kill("SIGTERM");
+    } catch {}
     // Force kill after 5 seconds
     setTimeout(() => {
       if (entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
-        try { entry.proc.kill("SIGKILL"); } catch {}
+        try {
+          entry.proc.kill("SIGKILL");
+        } catch {}
       }
     }, 5000);
   }
@@ -245,7 +290,9 @@ function registerSession(name, sendFn) {
   const entry = getOrSpawn(name);
   const sid = crypto.randomUUID();
   entry.sessions.set(sid, sendFn);
-  console.log(`[mcp:${name}] session registered: ${sid} (total: ${entry.sessions.size})`);
+  console.log(
+    `[mcp:${name}] session registered: ${sid} (total: ${entry.sessions.size})`,
+  );
   return sid;
 }
 
@@ -253,9 +300,16 @@ function unregisterSession(name, sid) {
   const entry = getStore().get(name);
   if (!entry) return;
   entry.sessions.delete(sid);
-  console.log(`[mcp:${name}] session unregistered: ${sid} (total: ${entry.sessions.size})`);
+  console.log(
+    `[mcp:${name}] session unregistered: ${sid} (total: ${entry.sessions.size})`,
+  );
   // If no sessions left and process is still running, start idle timer
-  if (entry.sessions.size === 0 && entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
+  if (
+    entry.sessions.size === 0 &&
+    entry.proc &&
+    !entry.proc.killed &&
+    entry.proc.exitCode === null
+  ) {
     console.log(`[mcp:${name}] no active sessions, starting idle timer`);
     startIdleTimer(name, entry);
   }
@@ -263,7 +317,8 @@ function unregisterSession(name, sid) {
 
 function sendToChild(name, jsonRpc) {
   const entry = getStore().get(name);
-  if (!entry?.proc?.stdin?.writable) throw new Error(`Bridge not running: ${name}`);
+  if (!entry?.proc?.stdin?.writable)
+    throw new Error(`Bridge not running: ${name}`);
   entry.proc.stdin.write(`${JSON.stringify(jsonRpc)}\n`);
 }
 
@@ -277,7 +332,11 @@ function getStatus() {
   const status = {};
   for (const [name, entry] of store.entries()) {
     status[name] = {
-      running: !!(entry.proc && !entry.proc.killed && entry.proc.exitCode === null),
+      running: !!(
+        entry.proc &&
+        !entry.proc.killed &&
+        entry.proc.exitCode === null
+      ),
       sessions: entry.sessions.size,
       uptime: entry.startTime ? Date.now() - entry.startTime : 0,
     };
@@ -285,4 +344,12 @@ function getStatus() {
   return status;
 }
 
-module.exports = { getOrSpawn, registerSession, unregisterSession, sendToChild, isRunning, findPlugin, getStatus };
+export {
+  getOrSpawn,
+  registerSession,
+  unregisterSession,
+  sendToChild,
+  isRunning,
+  findPlugin,
+  getStatus,
+};

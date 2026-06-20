@@ -1,7 +1,6 @@
 /**
  * MCP Rate Limiter Middleware
  *
- * Adapted from MetaMCP's rate-limit.middleware.ts.
  * Implements a combined sliding window + token bucket rate limiter.
  *
  * Usage:
@@ -100,9 +99,10 @@ function cleanupRateLimitEntries(maxAgeMs = 5 * 60_000) {
   const store = getStore();
   const now = Date.now();
   for (const [key, entry] of store.entries()) {
-    const lastActivity = entry.timestamps.length > 0
-      ? entry.timestamps[entry.timestamps.length - 1]
-      : entry.lastRefill;
+    const lastActivity =
+      entry.timestamps.length > 0
+        ? entry.timestamps[entry.timestamps.length - 1]
+        : entry.lastRefill;
     if (now - lastActivity > maxAgeMs) {
       store.delete(key);
     }
@@ -114,4 +114,4 @@ if (typeof setInterval !== "undefined") {
   setInterval(() => cleanupRateLimitEntries(), 5 * 60_000).unref?.();
 }
 
-module.exports = { checkRateLimit, cleanupRateLimitEntries };
+export { checkRateLimit, cleanupRateLimitEntries };

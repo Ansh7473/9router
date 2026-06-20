@@ -1,6 +1,13 @@
 import { v4 as uuidv4 } from "uuid";
+import { spawn } from "child_process";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import {
+  ensureCodeGraphInitialized,
+  isCodeGraphServer,
+  resolveLocalStdioSpawn,
+  validateLocalStdioServer,
+} from "@/lib/mcp/localStdioSecurity";
 
 const SENSITIVE_FIELDS = ["apiKey", "accessToken", "headers"];
 
@@ -20,7 +27,16 @@ function rowToServer(row) {
 }
 
 function serverToRow(s) {
-  const { id, name, type, isActive, testStatus, createdAt, updatedAt, ...rest } = s;
+  const {
+    id,
+    name,
+    type,
+    isActive,
+    testStatus,
+    createdAt,
+    updatedAt,
+    ...rest
+  } = s;
   return {
     id,
     name,
@@ -41,7 +57,16 @@ function upsert(db, s) {
      ON CONFLICT(id) DO UPDATE SET
        name=excluded.name, type=excluded.type, isActive=excluded.isActive,
        testStatus=excluded.testStatus, data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.name, r.type, r.isActive, r.testStatus, r.data, r.createdAt, r.updatedAt]
+    [
+      r.id,
+      r.name,
+      r.type,
+      r.isActive,
+      r.testStatus,
+      r.data,
+      r.createdAt,
+      r.updatedAt,
+    ],
   );
 }
 
@@ -49,8 +74,14 @@ export async function getMcpServers(filter = {}) {
   const db = await getAdapter();
   const where = [];
   const params = [];
-  if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
-  if (filter.type) { where.push("type = ?"); params.push(filter.type); }
+  if (filter.isActive !== undefined) {
+    where.push("isActive = ?");
+    params.push(filter.isActive ? 1 : 0);
+  }
+  if (filter.type) {
+    where.push("type = ?");
+    params.push(filter.type);
+  }
   const sql = `SELECT * FROM mcpServers${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY createdAt DESC`;
   const rows = db.all(sql, params);
   return rows.map(rowToServer);
@@ -75,7 +106,15 @@ export async function createMcpServer(data) {
     updatedAt: now,
   };
   // Copy allowed extra fields into data blob
-  const allowedFields = ["url", "command", "args", "env", "headers", "description", "toolNames"];
+  const allowedFields = [
+    "url",
+    "command",
+    "args",
+    "env",
+    "headers",
+    "description",
+    "toolNames",
+  ];
   for (const f of allowedFields) {
     if (data[f] !== undefined && data[f] !== null) server[f] = data[f];
   }
@@ -111,31 +150,23 @@ export async function testMcpServer(id) {
 
   try {
     if (server.type === "local-stdio") {
-      const { spawn } = await import("child_process");
-      const isCodeGraph = server.command === "codegraph" || server.name === "CodeGraph" || (server.command === "npx" && Array.isArray(server.args) && server.args.includes("@colbymchenry/codegraph"));
-      if (isCodeGraph) {
-        const fs = require("fs");
-        const path = require("path");
-        const projectRoot = process.cwd();
-        const codegraphDir = path.join(projectRoot, ".codegraph");
-        if (!fs.existsSync(codegraphDir)) {
-          console.log(`[CodeGraph Auto-Init] .codegraph not found in ${projectRoot}. Running codegraph init...`);
-          try {
-            const { execSync } = require("child_process");
-            execSync("npx -y @colbymchenry/codegraph init", { cwd: projectRoot });
-            console.log("[CodeGraph Auto-Init] Successfully initialized CodeGraph.");
-          } catch (err) {
-            console.error("[CodeGraph Auto-Init] Failed to run codegraph init:", err);
-          }
-        }
+      const validation = validateLocalStdioServer(server);
+      if (!validation.ok) return { ok: false, error: validation.error };
+
+      if (isCodeGraphServer(server)) {
+        ensureCodeGraphInitialized();
       }
 
       return await new Promise((resolve) => {
-        const proc = spawn(server.command, server.args || [], {
+        const spawnConfig = resolveLocalStdioSpawn(
+          server.command,
+          server.args || [],
+        );
+        const proc = spawn(spawnConfig.command, spawnConfig.args, {
           stdio: ["pipe", "pipe", "pipe"],
           env: { ...process.env, ...(server.env || {}) },
           timeout: 45000,
-          shell: process.platform === "win32",
+          windowsHide: true,
         });
 
         let buffer = "";
@@ -153,7 +184,9 @@ export async function testMcpServer(id) {
         const cleanup = () => {
           clearTimeout(timeoutId);
           if (!proc.killed && proc.exitCode === null) {
-            try { proc.kill(); } catch {}
+            try {
+              proc.kill();
+            } catch {}
           }
         };
 
@@ -185,10 +218,13 @@ export async function testMcpServer(id) {
                 capabilities: {},
                 clientInfo: { name: "9router-test", version: "1.0.0" },
               },
-            }) + "\n"
+            }) + "\n",
           );
         } catch (err) {
-          safeResolve({ ok: false, error: `Failed to write initialize: ${err.message}` });
+          safeResolve({
+            ok: false,
+            error: `Failed to write initialize: ${err.message}`,
+          });
         }
 
         proc.stdout.on("data", (chunk) => {
@@ -208,7 +244,7 @@ export async function testMcpServer(id) {
                   JSON.stringify({
                     jsonrpc: "2.0",
                     method: "notifications/initialized",
-                  }) + "\n"
+                  }) + "\n",
                 );
                 // Send tools/list request
                 proc.stdin.write(
@@ -217,7 +253,7 @@ export async function testMcpServer(id) {
                     id: 2,
                     method: "tools/list",
                     params: {},
-                  }) + "\n"
+                  }) + "\n",
                 );
               } else if (response.id === 2) {
                 const tools = response.result?.tools || [];
@@ -286,9 +322,10 @@ export async function testMcpServer(id) {
               ok: false,
               status: initRes.status,
               error: `Initialize failed: HTTP ${initRes.status}`,
-              hint: initRes.status === 401 || initRes.status === 403
-                ? "API key may be invalid or missing"
-                : undefined,
+              hint:
+                initRes.status === 401 || initRes.status === 403
+                  ? "API key may be invalid or missing"
+                  : undefined,
             };
           }
 
@@ -314,7 +351,11 @@ export async function testMcpServer(id) {
           clearTimeout(timeout);
 
           if (!toolsRes.ok) {
-            return { ok: false, status: toolsRes.status, error: `tools/list failed: HTTP ${toolsRes.status}` };
+            return {
+              ok: false,
+              status: toolsRes.status,
+              error: `tools/list failed: HTTP ${toolsRes.status}`,
+            };
           }
 
           // Parse SSE or JSON response
@@ -324,7 +365,9 @@ export async function testMcpServer(id) {
             const text = await toolsRes.text();
             for (const line of text.split("\n")) {
               if (line.startsWith("data: ")) {
-                try { result = JSON.parse(line.slice(6)); } catch {}
+                try {
+                  result = JSON.parse(line.slice(6));
+                } catch {}
               }
             }
           } else {
@@ -354,9 +397,10 @@ export async function testMcpServer(id) {
             ok: false,
             status: res.status,
             error: `Connection failed: HTTP ${res.status}`,
-            hint: res.status === 401 || res.status === 403
-              ? "API key may be invalid or missing"
-              : undefined,
+            hint:
+              res.status === 401 || res.status === 403
+                ? "API key may be invalid or missing"
+                : undefined,
           };
         }
 
@@ -394,13 +438,20 @@ export async function testMcpServer(id) {
             if (postUrl) break;
           }
         } finally {
-          try { reader.releaseLock(); } catch {}
-          try { await res.body.cancel(); } catch {}
+          try {
+            reader.releaseLock();
+          } catch {}
+          try {
+            await res.body.cancel();
+          } catch {}
         }
 
         if (!postUrl) {
           clearTimeout(timeout);
-          return { ok: false, error: "Failed to receive endpoint event from SSE stream" };
+          return {
+            ok: false,
+            error: "Failed to receive endpoint event from SSE stream",
+          };
         }
 
         // Now perform HTTP POST handshake via postUrl
@@ -450,7 +501,11 @@ export async function testMcpServer(id) {
         clearTimeout(timeout);
 
         if (!toolsRes.ok) {
-          return { ok: false, status: toolsRes.status, error: `tools/list POST failed: HTTP ${toolsRes.status}` };
+          return {
+            ok: false,
+            status: toolsRes.status,
+            error: `tools/list POST failed: HTTP ${toolsRes.status}`,
+          };
         }
 
         // Parse response (could be JSON or SSE data)
@@ -460,7 +515,9 @@ export async function testMcpServer(id) {
           const text = await toolsRes.text();
           for (const line of text.split("\n")) {
             if (line.startsWith("data: ")) {
-              try { result = JSON.parse(line.slice(6)); } catch {}
+              try {
+                result = JSON.parse(line.slice(6));
+              } catch {}
             }
           }
         } else {
@@ -477,7 +534,10 @@ export async function testMcpServer(id) {
         };
       } catch (err) {
         clearTimeout(timeout);
-        return { ok: false, error: err.name === "AbortError" ? "Timeout (15s)" : err.message };
+        return {
+          ok: false,
+          error: err.name === "AbortError" ? "Timeout (15s)" : err.message,
+        };
       }
     }
 

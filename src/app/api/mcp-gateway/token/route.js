@@ -1,8 +1,16 @@
-import { getApiKeys, createApiKey } from "@/lib/localDb";
+import { getApiKeys } from "@/lib/localDb";
+import {
+  hasDashboardOrCliAuth,
+  unauthorizedResponse,
+} from "@/lib/auth/dashboardApiAuth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request) {
+  if (!(await hasDashboardOrCliAuth(request))) {
+    return unauthorizedResponse();
+  }
+
   try {
     // Parse urlencoded form data or JSON
     let body = {};
@@ -15,15 +23,24 @@ export async function POST(request) {
     }
 
     const grantType = body.grant_type || "authorization_code";
+    if (grantType !== "authorization_code" && grantType !== "refresh_token") {
+      return Response.json(
+        { error: "unsupported_grant_type" },
+        { status: 400 },
+      );
+    }
 
-    // Get an active API key to return as the token
     const keys = await getApiKeys();
-    let activeKey = keys.find((k) => k.isActive)?.key;
+    const activeKey = keys.find((k) => k.isActive)?.key;
 
     if (!activeKey) {
-      // Auto-generate a key if none exist so the connection never fails
-      const newKeyObj = await createApiKey("MCP Gateway Key", "mcp-gateway-default");
-      activeKey = newKeyObj.key;
+      return Response.json(
+        {
+          error: "invalid_request",
+          error_description: "No active API key is configured",
+        },
+        { status: 400 },
+      );
     }
 
     return Response.json(
@@ -41,10 +58,13 @@ export async function POST(request) {
           "Cache-Control": "no-store",
           Pragma: "no-cache",
         },
-      }
+      },
     );
   } catch (err) {
     console.error("[mcp-gateway] Token exchange failed:", err);
-    return Response.json({ error: "server_error", error_description: err.message }, { status: 500 });
+    return Response.json(
+      { error: "server_error", error_description: err.message },
+      { status: 500 },
+    );
   }
 }
