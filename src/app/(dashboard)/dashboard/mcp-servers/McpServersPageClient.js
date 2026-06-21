@@ -376,10 +376,23 @@ export default function McpServersPageClient() {
   const [showMcpKeyModal, setShowMcpKeyModal] = useState(false);
   const [newMcpKeyName, setNewMcpKeyName] = useState("");
   const [creatingMcpKey, setCreatingMcpKey] = useState(false);
+  const [showConfigGenerator, setShowConfigGenerator] = useState(false);
+  const [showAdvisory, setShowAdvisory] = useState(true);
 
   useEffect(() => {
     setMounted(true);
+    if (typeof window !== "undefined") {
+      const dismissed = localStorage.getItem("9router_mcp_advisory_dismissed") === "true";
+      if (dismissed) {
+        setShowAdvisory(false);
+      }
+    }
   }, []);
+
+  const dismissAdvisory = () => {
+    localStorage.setItem("9router_mcp_advisory_dismissed", "true");
+    setShowAdvisory(false);
+  };
 
   const fetchServers = useCallback(async () => {
     try {
@@ -453,6 +466,28 @@ export default function McpServersPageClient() {
         setDeleteTarget(null);
       }
     } catch {}
+  };
+
+  const handleToggleAllServers = async (newActive) => {
+    if (servers.length === 0) {
+      notify.info("No servers configured. Please add a server first.");
+      return;
+    }
+
+    await Promise.all(
+      servers.map((s) =>
+        fetch(`/api/mcp-servers/${s.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isActive: newActive }),
+        }),
+      ),
+    );
+
+    setServers((prev) => prev.map((s) => ({ ...s, isActive: newActive })));
+    notify.success(
+      `${newActive ? "Enabled" : "Disabled"} all ${servers.length} servers`,
+    );
   };
 
   const handleToggleLocalServers = async (newActive) => {
@@ -770,100 +805,167 @@ export default function McpServersPageClient() {
       {activeTab === "servers" && (
         <>
           {/* Warning/Guideline Advisory */}
-          <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 p-4 flex gap-3">
-            <span className="material-symbols-outlined text-amber-500 text-[20px] shrink-0 mt-0.5">
-              warning
-            </span>
-            <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-semibold text-amber-400">
-                Environment Advisory for MCP Servers
-              </h4>
-              <p className="text-xs text-text-muted mt-1 leading-relaxed">
-                <strong>Local stdio tools</strong> (command-line/binary
-                processes running on localhost) require running 9Router on a{" "}
-                <strong>local host / development machine</strong> for full
-                functionality. For <strong>VPS or remote deployments</strong>,
-                please configure and use{" "}
-                <strong>remote HTTPS / SSE tools</strong> instead, as local
-                stdio processes are not executable/runnable in typical cloud
-                server virtual environments.
-              </p>
-            </div>
-          </div>
-
-          {/* Quick Controls Bar */}
-          <div className="flex flex-col gap-3 p-4 bg-surface-1 border border-border-subtle rounded-xl sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col gap-0.5">
-              <h3 className="font-semibold text-sm">
-                Local Server Quick Controls
-              </h3>
-              <p className="text-xs text-text-muted">
-                Quickly enable or disable all local stdio MCP servers that you
-                have added.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                icon="pause_circle"
-                onClick={() => handleToggleLocalServers(false)}
-                className="w-full sm:w-auto"
-              >
-                Disable Local stdio
-              </Button>
-              <Button
-                size="sm"
-                icon="play_circle"
-                onClick={() => handleToggleLocalServers(true)}
-                className="w-full sm:w-auto"
-              >
-                Enable Local stdio
-              </Button>
-            </div>
-          </div>
-
-          {/* Gateway Info */}
-          <div className="rounded-xl bg-surface-1 border border-border-subtle p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex items-center justify-center size-9 rounded-lg bg-brand-500/10 shrink-0 mt-0.5">
-                <span className="material-symbols-outlined text-[18px] text-brand-500">
-                  swap_horiz
-                </span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-semibold text-text-main">
-                  Unified Gateway Endpoint
-                </h3>
-                <p className="text-xs text-text-muted mt-0.5">
-                  All active servers are accessible through a single gateway.
-                  Configure your MCP client to use:
+          {showAdvisory && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 p-4 flex gap-3 relative">
+              <span className="material-symbols-outlined text-amber-500 text-[20px] shrink-0 mt-0.5">
+                warning
+              </span>
+              <div className="flex-1 min-w-0 pr-6">
+                <h4 className="text-sm font-semibold text-amber-400">
+                  Environment Advisory for MCP Servers
+                </h4>
+                <p className="text-xs text-text-muted mt-1 leading-relaxed">
+                  <strong>Local stdio tools</strong> (command-line/binary
+                  processes running on localhost) require running 9Router on a{" "}
+                  <strong>local host / development machine</strong> for full
+                  functionality. For <strong>VPS or remote deployments</strong>,
+                  please configure and use{" "}
+                  <strong>remote HTTPS / SSE tools</strong> instead, as local
+                  stdio processes are not executable/runnable in typical cloud
+                  server virtual environments.
                 </p>
-                <code className="block mt-2 px-3 py-1.5 rounded-lg bg-surface-2 text-xs font-mono text-brand-400 break-all">
-                  {mounted
-                    ? `${window.location.origin}/api/mcp-gateway`
-                    : "/api/mcp-gateway"}
-                </code>
-                <div className="flex flex-wrap gap-3 mt-2 text-xs text-text-muted">
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">
-                      cell_tower
-                    </span>
-                    SSE: <code className="text-brand-400">/sse</code>
+              </div>
+              <button
+                onClick={dismissAdvisory}
+                className="absolute top-3 right-3 text-text-muted hover:text-text-main p-1 rounded hover:bg-surface-3 transition-colors cursor-pointer"
+                title="Dismiss"
+              >
+                <span className="material-symbols-outlined text-[16px]">
+                  close
+                </span>
+              </button>
+            </div>
+          )}
+
+          {/* Grid Container for Gateway Info & Quick Controls */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Gateway Info */}
+            <div className="rounded-xl bg-surface-1 border border-border-subtle p-4 flex flex-col justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex items-center justify-center size-9 rounded-lg bg-brand-500/10 shrink-0 mt-0.5">
+                  <span className="material-symbols-outlined text-[18px] text-brand-500">
+                    swap_horiz
                   </span>
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">
-                      send
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-text-main">
+                    Unified Gateway Endpoint
+                  </h3>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    All active servers are accessible through a single gateway.
+                    Configure your MCP client to use:
+                  </p>
+                  <code className="block mt-2 px-3 py-1.5 rounded-lg bg-surface-2 text-xs font-mono text-brand-400 break-all">
+                    {mounted
+                      ? `${window.location.origin}/api/mcp-gateway`
+                      : "/api/mcp-gateway"}
+                  </code>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-text-muted">
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">
+                        cell_tower
+                      </span>
+                      SSE: <code className="text-brand-400">/sse</code>
                     </span>
-                    Message: <code className="text-brand-400">/message</code>
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">
-                      select_all
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">
+                        send
+                      </span>
+                      Message: <code className="text-brand-400">/message</code>
                     </span>
-                    Per-server:{" "}
-                    <code className="text-brand-400">/[serverId]/...</code>
+                    <span className="flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">
+                        select_all
+                      </span>
+                      Per-server:{" "}
+                      <code className="text-brand-400">/[serverId]/...</code>
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 pt-3 border-t border-border-subtle flex justify-end">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon="settings_input_component"
+                  onClick={() => setShowConfigGenerator(true)}
+                  className="w-full sm:w-auto"
+                >
+                  Generate Client Config
+                </Button>
+              </div>
+            </div>
+
+            {/* Quick Controls Card */}
+            <div className="rounded-xl bg-surface-1 border border-border-subtle p-4 flex flex-col justify-between">
+              <div className="flex items-start gap-3 h-full">
+                <div className="flex items-center justify-center size-9 rounded-lg bg-brand-500/10 shrink-0 mt-0.5">
+                  <span className="material-symbols-outlined text-[18px] text-brand-500">
+                    tune
                   </span>
+                </div>
+                <div className="flex-1 min-w-0 flex flex-col justify-between h-full">
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-main">
+                      Quick Controls
+                    </h3>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Enable or disable configured MCP servers instantly
+                    </p>
+                  </div>
+                  
+                  {/* Control Rows */}
+                  <div className="mt-4 flex flex-col gap-3">
+                    {/* Row 1: All Servers */}
+                    <div className="flex items-center justify-between gap-4 border-b border-border-subtle pb-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-text-main">All Servers</div>
+                        <div className="text-[10px] text-text-muted mt-0.5">Manage all configured servers</div>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          icon="pause_circle"
+                          onClick={() => handleToggleAllServers(false)}
+                        >
+                          Disable All
+                        </Button>
+                        <Button
+                          size="sm"
+                          icon="play_circle"
+                          onClick={() => handleToggleAllServers(true)}
+                        >
+                          Enable All
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Row 2: Local stdio */}
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-text-main">Local stdio Servers</div>
+                        <div className="text-[10px] text-text-muted mt-0.5">Control local process tools</div>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          icon="pause_circle"
+                          onClick={() => handleToggleLocalServers(false)}
+                        >
+                          Disable Local
+                        </Button>
+                        <Button
+                          size="sm"
+                          icon="play_circle"
+                          onClick={() => handleToggleLocalServers(true)}
+                        >
+                          Enable Local
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1301,6 +1403,14 @@ export default function McpServersPageClient() {
           </div>
         </div>
       </Modal>
+
+      {/* Config Generator Modal */}
+      <ConfigGeneratorModal
+        isOpen={showConfigGenerator}
+        onClose={() => setShowConfigGenerator(false)}
+        mcpApiKeys={mcpApiKeys}
+        activeCombo={combos.find((c) => c.isActive)}
+      />
     </div>
   );
 }
@@ -2077,6 +2187,297 @@ function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
             disabled={!name.trim() || !!nameError}
           >
             {isEdit ? "Save" : "Create"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ConfigGeneratorModal({ isOpen, onClose, mcpApiKeys, activeCombo }) {
+  const [selectedClient, setSelectedClient] = useState("cursor");
+  const [selectedKey, setSelectedKey] = useState("");
+  const [copied, setCopied] = useState(false);
+  const notify = useNotificationStore();
+
+  const gatewayUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/mcp-gateway`
+      : "/api/mcp-gateway";
+
+  const activeKey = selectedKey
+    ? mcpApiKeys.find((k) => k.id === selectedKey)
+    : mcpApiKeys.find((k) => k.isActive);
+
+  const clients = [
+    {
+      id: "cursor",
+      name: "Cursor",
+      icon: "edit_note",
+      path: "~/.cursor/mcp.json",
+    },
+    {
+      id: "claude-code",
+      name: "Claude Code",
+      icon: "code",
+      path: "~/.claude.json",
+    },
+    {
+      id: "vscode",
+      name: "VS Code",
+      icon: "code_blocks",
+      path: ".vscode/mcp.json",
+    },
+    {
+      id: "cline",
+      name: "Cline",
+      icon: "smart_toy",
+      path: "~/.cline/mcp.json",
+    },
+    {
+      id: "windsurf",
+      name: "Windsurf",
+      icon: "surfing",
+      path: "~/.codeium/windsurf/mcp_config.json",
+    },
+    {
+      id: "gemini-cli",
+      name: "Gemini CLI",
+      icon: "auto_awesome",
+      path: "~/.gemini/settings.json",
+    },
+    { id: "generic", name: "Generic MCP", icon: "hub", path: "mcp.json" },
+  ];
+
+  const generateConfig = () => {
+    const headers = activeKey
+      ? { Authorization: `Bearer ${activeKey.key}` }
+      : {};
+
+    const comboParam = activeCombo ? `?combo=${activeCombo.name}` : "";
+    const fullUrl = `${gatewayUrl}${comboParam}`;
+
+    switch (selectedClient) {
+      case "cursor":
+        // Cursor: ~/.cursor/mcp.json or .cursor/mcp.json (project-level)
+        return `{
+  "mcpServers": {
+    "9router": {
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)},
+      "disabled": false
+    }
+  }
+}`;
+
+      case "claude-code":
+        // Claude Code: ~/.claude.json or .mcp.json (project-level)
+        return `{
+  "mcpServers": {
+    "9router": {
+      "type": "sse",
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)}
+    }
+  }
+}`;
+
+      case "vscode":
+        // VS Code: .vscode/mcp.json (workspace)
+        return `{
+  "servers": [
+    {
+      "name": "9router",
+      "type": "sse",
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)}
+    }
+  ]
+}`;
+
+      case "cline":
+        // Cline: ~/.cline/mcp.json
+        return `{
+  "mcpServers": {
+    "9router": {
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)},
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}`;
+
+      case "windsurf":
+        // Windsurf: ~/.codeium/windsurf/mcp_config.json
+        return `{
+  "mcpServers": {
+    "9router": {
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)}
+    }
+  }
+}`;
+
+      case "gemini-cli":
+        // Gemini CLI: ~/.gemini/settings.json
+        return `{
+  "mcpServers": {
+    "9router": {
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)}
+    }
+  }
+}`;
+
+      case "generic":
+      default:
+        return `{
+  "mcpServers": {
+    "9router": {
+      "url": "${fullUrl}",
+      "headers": ${JSON.stringify(headers, null, 8)}
+    }
+  }
+}`;
+    }
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(generateConfig());
+      setCopied(true);
+      notify.success("Config copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      notify.error("Failed to copy config");
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="MCP Client Configuration">
+      <div className="flex flex-col gap-4">
+        {/* Client Selection */}
+        <div>
+          <label className="block text-xs font-medium text-text-muted mb-2">
+            Select Client
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {clients.map((client) => (
+              <button
+                key={client.id}
+                onClick={() => setSelectedClient(client.id)}
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg border transition-colors ${
+                  selectedClient === client.id
+                    ? "border-brand-500 bg-brand-500/10 text-brand-500"
+                    : "border-border bg-surface-2 text-text-muted hover:border-border hover:text-text-main"
+                }`}
+              >
+                <span className="material-symbols-outlined text-[20px]">
+                  {client.icon}
+                </span>
+                <span className="text-xs font-medium">{client.name}</span>
+                <span className="text-[9px] text-text-muted font-mono truncate w-full text-center">
+                  {client.path}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* API Key Selection */}
+        <div>
+          <label className="block text-xs font-medium text-text-muted mb-2">
+            API Key (Optional)
+          </label>
+          <select
+            value={selectedKey}
+            onChange={(e) => setSelectedKey(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-border bg-surface-2 text-sm focus:outline-none focus:border-brand-500"
+          >
+            <option value="">No authentication</option>
+            {mcpApiKeys.map((key) => (
+              <option key={key.id} value={key.id}>
+                {key.name} ({key.key.substring(0, 8)}...)
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-text-muted mt-1">
+            {activeKey
+              ? "✓ Using API key for authentication"
+              : "No API key selected - gateway will be publicly accessible"}
+          </p>
+        </div>
+
+        {/* Active Combo Info */}
+        {activeCombo && (
+          <div className="rounded-lg bg-brand-500/10 border border-brand-500/20 p-3">
+            <p className="text-xs text-brand-400">
+              <strong>Active Combo:</strong> {activeCombo.name}
+              <br />
+              <span className="text-[10px] text-text-muted mt-1 block">
+                Only tools in this combo will be exposed through the gateway.
+              </span>
+            </p>
+          </div>
+        )}
+
+        {/* Generated Config */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-medium text-text-muted">
+              Generated Configuration
+            </label>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={copied ? "check" : "content_copy"}
+              onClick={handleCopy}
+            >
+              {copied ? "Copied!" : "Copy"}
+            </Button>
+          </div>
+          <pre className="p-3 rounded-lg bg-surface-2 border border-border overflow-x-auto text-xs font-mono text-text-main max-h-64 overflow-y-auto">
+            {generateConfig()}
+          </pre>
+        </div>
+
+        {/* Instructions */}
+        <div className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+          <p className="text-xs text-blue-400">
+            <strong>
+              How to use ({clients.find((c) => c.id === selectedClient)?.name}):
+            </strong>
+            <br />
+            1. Copy the configuration above
+            <br />
+            2.{" "}
+            {selectedClient === "cursor" &&
+              "Paste into ~/.cursor/mcp.json (global) or .cursor/mcp.json (project)"}
+            {selectedClient === "claude-code" &&
+              "Paste into ~/.claude.json (user) or .mcp.json (project)"}
+            {selectedClient === "vscode" &&
+              "Paste into .vscode/mcp.json (workspace) or use VS Code settings"}
+            {selectedClient === "cline" && "Paste into ~/.cline/mcp.json"}
+            {selectedClient === "windsurf" &&
+              "Paste into ~/.codeium/windsurf/mcp_config.json"}
+            {selectedClient === "gemini-cli" &&
+              "Paste into ~/.gemini/settings.json"}
+            {selectedClient === "generic" &&
+              "Paste into your MCP client's configuration file"}
+            <br />
+            3. Restart your client to connect to the gateway
+            <br />
+            4. All active MCP servers will be available as tools
+          </p>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Close
           </Button>
         </div>
       </div>
