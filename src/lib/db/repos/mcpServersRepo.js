@@ -8,6 +8,39 @@ import {
   resolveLocalStdioSpawn,
   validateLocalStdioServer,
 } from "@/lib/mcp/localStdioSecurity";
+import {
+  computeBasePrefix,
+  normalizePrefix,
+  makeUniquePrefix,
+} from "@/lib/mcp/mcpServerPrefix";
+
+// One-time-per-process guard: assign unique prefixes to any legacy servers
+// that predate the prefix feature.
+let _prefixBackfillDone = false;
+
+function backfillPrefixes(db) {
+  const rows = db.all(`SELECT * FROM mcpServers ORDER BY createdAt ASC`);
+  const servers = rows.map(rowToServer);
+  const taken = new Set(servers.map((s) => s.prefix).filter(Boolean));
+  for (const s of servers) {
+    if (!s.prefix) {
+      const p = makeUniquePrefix(computeBasePrefix(s.name), taken);
+      s.prefix = p;
+      taken.add(p);
+      upsert(db, s); // persists prefix into the data blob; updatedAt preserved
+    }
+  }
+}
+
+// Collect the prefixes already in use, optionally excluding one server id.
+function collectTakenPrefixes(servers, excludeId = null) {
+  return new Set(
+    servers
+      .filter((s) => s.id !== excludeId)
+      .map((s) => s.prefix)
+      .filter(Boolean),
+  );
+}
 
 const SENSITIVE_FIELDS = ["apiKey", "accessToken", "headers"];
 
@@ -72,6 +105,14 @@ function upsert(db, s) {
 
 export async function getMcpServers(filter = {}) {
   const db = await getAdapter();
+  if (!_prefixBackfillDone) {
+    try {
+      backfillPrefixes(db);
+    } catch {
+      // Non-fatal: getServerPrefix() falls back to a computed base prefix.
+    }
+    _prefixBackfillDone = true;
+  }
   const where = [];
   const params = [];
   if (filter.isActive !== undefined) {
@@ -118,6 +159,15 @@ export async function createMcpServer(data) {
   for (const f of allowedFields) {
     if (data[f] !== undefined && data[f] !== null) server[f] = data[f];
   }
+
+  // Assign a unique, persisted prefix. Honor an optional user override,
+  // otherwise derive a readable base from the name; append a number on collision.
+  const existing = await getMcpServers();
+  const taken = collectTakenPrefixes(existing);
+  const desiredBase =
+    normalizePrefix(data.prefix) || computeBasePrefix(server.name);
+  server.prefix = makeUniquePrefix(desiredBase, taken);
+
   upsert(db, server);
   return server;
 }
@@ -128,6 +178,17 @@ export async function updateMcpServer(id, data) {
   if (!row) return null;
   const existing = rowToServer(row);
   const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
+
+  // Resolve the prefix: apply a (unique) override if provided, otherwise
+  // ensure a legacy server without one gets assigned a prefix now.
+  if (data.prefix !== undefined || !existing.prefix) {
+    const all = await getMcpServers();
+    const taken = collectTakenPrefixes(all, id);
+    const desiredBase =
+      normalizePrefix(data.prefix) || computeBasePrefix(merged.name);
+    merged.prefix = makeUniquePrefix(desiredBase, taken);
+  }
+
   upsert(db, merged);
   return merged;
 }

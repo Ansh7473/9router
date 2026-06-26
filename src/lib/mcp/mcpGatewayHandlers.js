@@ -1,5 +1,6 @@
 import { getMcpServers } from "@/models";
 import { sendToMcpServer } from "@/lib/mcp/mcpServerManager";
+import { computeBasePrefix } from "@/lib/mcp/mcpServerPrefix";
 
 // ─── Aggregate tools/list from all active servers ───────────────────────────
 
@@ -16,19 +17,11 @@ export function invalidateToolsListCache() {
   _toolsListCache = { key: null, tools: null, expires: 0 };
 }
 
-// Map server names to short prefixes for tool names
+// Resolve a server's tool-name prefix. Prefer the persisted unique prefix;
+// fall back to a computed base for any server not yet backfilled.
 function getServerPrefix(server) {
-  const name = server.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (name.includes("testsprite")) return "ts";
-  if (name.includes("sentry")) return "sr";
-  if (name.includes("firecrawl")) return "fc";
-  if (name.includes("puppeteer")) return "pp";
-  if (name.includes("astro")) return "ad";
-  if (name.includes("stitch")) return "st";
-  if (name.includes("github")) return "gh";
-  if (name.includes("tavily")) return "tv";
-
-  return name.slice(0, 3);
+  if (server && server.prefix) return server.prefix;
+  return computeBasePrefix(server?.name);
 }
 
 // Aggregate (prefixed) tools from all active servers, with caching when no

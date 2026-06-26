@@ -49,6 +49,7 @@ export async function PUT(request, { params }) {
       description,
       toolNames,
       isActive,
+      prefix,
     } = body;
 
     const server = await getMcpServerById(id);
@@ -70,6 +71,7 @@ export async function PUT(request, { params }) {
     if (description !== undefined) updates.description = description;
     if (toolNames !== undefined) updates.toolNames = toolNames;
     if (isActive !== undefined) updates.isActive = isActive;
+    if (prefix !== undefined) updates.prefix = prefix;
 
     const validation = validateLocalStdioServer({ ...server, ...updates });
     if (!validation.ok) {

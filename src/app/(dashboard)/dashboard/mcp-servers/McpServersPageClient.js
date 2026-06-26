@@ -1283,6 +1283,7 @@ function ServerFormModal({ title, server, onSubmit, onClose }) {
   const [toolNamesStr, setToolNamesStr] = useState(
     (server?.toolNames || []).join(", "),
   );
+  const [prefix, setPrefix] = useState(server?.prefix || "");
   const [envStr, setEnvStr] = useState(
     server?.env ? JSON.stringify(server.env, null, 2) : "",
   );
@@ -1328,6 +1329,7 @@ function ServerFormModal({ title, server, onSubmit, onClose }) {
           .map((s) => s.trim())
           .filter(Boolean);
       }
+      if (prefix.trim()) data.prefix = prefix.trim();
       await onSubmit(data);
     } catch (err) {
       setError(err.message);
@@ -1489,6 +1491,24 @@ function ServerFormModal({ title, server, onSubmit, onClose }) {
               placeholder="web_search, file_read, execute_command"
               className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-border text-sm text-text-main font-mono placeholder:text-text-muted/50 focus:outline-none focus:border-brand-500 transition-colors"
             />
+          </div>
+
+          {/* Tool Prefix (optional override) */}
+          <div>
+            <label className="block text-xs font-medium text-text-muted mb-1.5">
+              Tool Prefix (optional)
+            </label>
+            <input
+              type="text"
+              value={prefix}
+              onChange={(e) => setPrefix(e.target.value)}
+              placeholder="Auto-assigned if left blank (e.g. bro, bro2)"
+              className="w-full px-3 py-2 rounded-lg bg-surface-2 border border-border text-sm text-text-main font-mono placeholder:text-text-muted/50 focus:outline-none focus:border-brand-500 transition-colors"
+            />
+            <p className="text-[10px] text-text-muted mt-0.5">
+              Namespaces this server&apos;s tools (prefix__tool) so they stay
+              unique across servers. Leave blank to auto-assign.
+            </p>
           </div>
 
           {/* Custom Headers (JSON) */}

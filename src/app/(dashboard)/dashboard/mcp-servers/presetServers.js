@@ -129,13 +129,6 @@ export const PRESET_SERVERS = [
     description: "GitHub API integration",
   },
   {
-    name: "Browser MCP",
-    type: "local-stdio",
-    command: "npx",
-    args: ["-y", "@browsermcp/mcp@latest"],
-    description: "Control your running Chrome browser",
-  },
-  {
     name: "CodeGraph",
     type: "local-stdio",
     command: "npx",
@@ -195,21 +188,6 @@ export const PRESET_SERVERS = [
     command: "npx",
     args: ["-y", "@supabase/mcp-server-supabase"],
     description: "Inspect and query local Supabase database schemas",
-  },
-  {
-    name: "Browserbase (Remote)",
-    type: "remote-http",
-    url: "https://mcp.browserbase.com/mcp",
-    description:
-      "Cloud headless browser automation, web interaction, and extraction",
-  },
-  {
-    name: "Browserbase (Local)",
-    type: "local-stdio",
-    command: "npx",
-    args: ["-y", "@browserbasehq/mcp"],
-    env: { BROWSERBASE_API_KEY: "", BROWSERBASE_PROJECT_ID: "" },
-    description: "Local headless browser manager and stagehand web interaction",
   },
   {
     name: "Playwright",

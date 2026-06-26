@@ -34,6 +34,7 @@ export async function POST(request) {
       headers,
       description,
       toolNames,
+      prefix,
     } = body;
 
     if (!name) {
@@ -77,6 +78,7 @@ export async function POST(request) {
       headers: headers || {},
       description,
       toolNames: toolNames || [],
+      prefix,
     });
 
     invalidateToolsListCache();
