@@ -6,6 +6,10 @@ import {
 } from "@/lib/mcp/mcpServerManager";
 import { validateApiKey } from "@/lib/localDb";
 import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
+import {
+  SUPPORTED_PROTOCOL_VERSIONS,
+  deriveSessionOwner,
+} from "@/lib/mcp/gatewayProtocol";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,6 +69,34 @@ export async function GET(request) {
     );
   }
 
+  // 1. Accept validation
+  const acceptHeader = request.headers.get("accept");
+  if (acceptHeader && !acceptHeader.includes("text/event-stream") && !acceptHeader.includes("*/*")) {
+    return new Response(
+      JSON.stringify({
+        error: "Not Acceptable: Client must accept text/event-stream",
+      }),
+      {
+        status: 406,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  // 2. mcp-protocol-version validation
+  const protocolVersion = request.headers.get("mcp-protocol-version");
+  if (protocolVersion && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolVersion)) {
+    return new Response(
+      JSON.stringify({
+        error: `Unsupported protocol version: ${protocolVersion}. Supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}`,
+      }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
   const servers = await getMcpServers({ isActive: true });
   if (servers.length === 0) {
     return new Response("No active MCP servers configured", { status: 404 });
@@ -77,6 +109,7 @@ export async function GET(request) {
     : "";
 
   const sessionId = crypto.randomUUID();
+  const ownerId = deriveSessionOwner(token);
   const encoder = new TextEncoder();
   let clientConnected = true;
 
@@ -91,7 +124,7 @@ export async function GET(request) {
         } catch {}
       };
 
-      registerGatewaySession(sessionId, send);
+      registerGatewaySession(sessionId, send, ownerId);
 
       // MCP SSE handshake: endpoint first (tells client where to POST), then connected
       // Return endpoint with sessionId query param so clients route POSTs to this session!
@@ -212,6 +245,7 @@ export async function GET(request) {
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      "mcp-session-id": sessionId,
     },
   });
 }

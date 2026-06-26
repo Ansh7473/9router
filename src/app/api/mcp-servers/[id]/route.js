@@ -7,6 +7,8 @@ import {
   sanitizeMcpServer,
 } from "@/models";
 import { validateLocalStdioServer } from "@/lib/mcp/localStdioSecurity";
+import { invalidateToolsListCache } from "@/lib/mcp/mcpGatewayHandlers";
+import { notifyToolsListChanged } from "@/lib/mcp/mcpServerManager";
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +77,14 @@ export async function PUT(request, { params }) {
     }
 
     const updated = await updateMcpServer(id, updates);
+    invalidateToolsListCache();
+    // If the server's active state changed, the exposed tool set changed too —
+    // tell connected MCP clients to refresh.
+    if (updates.isActive !== undefined && updates.isActive !== server.isActive) {
+      notifyToolsListChanged();
+    } else if (updates.toolNames !== undefined) {
+      notifyToolsListChanged();
+    }
     return NextResponse.json({ server: sanitizeMcpServer(updated) });
   } catch (error) {
     console.error("Error updating MCP server:", error);
@@ -96,6 +106,8 @@ export async function DELETE(request, { params }) {
         { status: 404 },
       );
     }
+    invalidateToolsListCache();
+    notifyToolsListChanged();
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error deleting MCP server:", error);

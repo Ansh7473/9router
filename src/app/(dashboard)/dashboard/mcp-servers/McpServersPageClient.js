@@ -1954,6 +1954,7 @@ function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
   );
   const [selectedTools, setSelectedTools] = useState(combo?.tools || []);
   const [availableTools, setAvailableTools] = useState([]);
+  const [loadingTools, setLoadingTools] = useState(false);
   const [toolSearch, setToolSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -1980,22 +1981,20 @@ function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
   };
 
   const fetchTools = async () => {
+    setLoadingTools(true);
     try {
-      const toolsRes = await fetch("/api/mcp-gateway/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: "mcp-combos-page",
-          method: "tools/list",
-        }),
-      });
+      // Internal dashboard endpoint (session-authed). Do NOT call the public
+      // gateway /api/mcp-gateway/message route here — that requires an mcp_ key
+      // and returns 401 from the browser, leaving the tool list empty.
+      const toolsRes = await fetch("/api/mcp-servers/tools");
       if (toolsRes.ok) {
         const toolsData = await toolsRes.json();
-        setAvailableTools(toolsData?.result?.tools || []);
+        setAvailableTools(toolsData?.tools || []);
       }
     } catch (error) {
       console.error("Error fetching tools:", error);
+    } finally {
+      setLoadingTools(false);
     }
   };
 
@@ -2078,14 +2077,18 @@ function McpComboFormModal({ isOpen, combo, onClose, onSave }) {
 
             {/* List of all active tools with +/- buttons */}
             <div className="border border-border rounded-lg bg-surface-2 max-h-[200px] overflow-y-auto divide-y divide-border">
-              {availableTools.length === 0 ? (
+              {loadingTools ? (
+                <div className="text-center py-6 text-text-muted text-xs">
+                  Loading tools from active MCP servers...
+                </div>
+              ) : availableTools.length === 0 ? (
                 <div className="text-center py-6 text-text-muted text-xs">
                   No active MCP tools found. Ensure your MCP servers are
                   connected.
                 </div>
               ) : filteredToolsList.length === 0 ? (
                 <div className="text-center py-6 text-text-muted text-xs">
-                  No tools matching "{toolSearch}"
+                  No tools matching &quot;{toolSearch}&quot;
                 </div>
               ) : (
                 filteredToolsList.map((tool) => {

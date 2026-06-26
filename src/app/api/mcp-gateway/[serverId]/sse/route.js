@@ -17,7 +17,7 @@ export async function GET(request, { params }) {
 
   const encoder = new TextEncoder();
   const stream = createMcpSSEStream(server);
-  
+
   // Wrap with handshake event for MCP SSE protocol
   const wrappedStream = new ReadableStream({
     async start(controller) {
@@ -25,7 +25,7 @@ export async function GET(request, { params }) {
       controller.enqueue(
         encoder.encode(`event: endpoint\ndata: /api/mcp-gateway/${server.id}/message\n\n`)
       );
-      
+
       const reader = stream.getReader();
       let buffer = "";
       try {

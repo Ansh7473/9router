@@ -670,8 +670,12 @@ function getServerManagerStatus() {
   };
 }
 
-function registerGatewaySession(sessionId, send) {
-  getConnections().gatewaySessions.set(sessionId, { send });
+function registerGatewaySession(sessionId, send, ownerId = null) {
+  getConnections().gatewaySessions.set(sessionId, {
+    send,
+    ownerId,
+    createdAt: Date.now(),
+  });
 }
 
 function unregisterGatewaySession(sessionId) {
@@ -682,6 +686,33 @@ function getGatewaySession(sessionId) {
   return getConnections().gatewaySessions.get(sessionId);
 }
 
+// Broadcast a JSON-RPC notification to every active gateway SSE session.
+// Returns the number of sessions the notification was delivered to.
+function broadcastGatewayNotification(notification) {
+  const sessions = getConnections().gatewaySessions;
+  if (!sessions || sessions.size === 0) return 0;
+  const payload = `event: message\ndata: ${JSON.stringify(notification)}\n\n`;
+  let delivered = 0;
+  for (const session of sessions.values()) {
+    try {
+      session.send(payload);
+      delivered++;
+    } catch {
+      // Ignore broken/closed sessions; cleanup happens on stream cancel.
+    }
+  }
+  return delivered;
+}
+
+// Notify connected MCP clients that the aggregated tool set has changed so they
+// re-fetch tools/list. Emitted when servers are added/removed/enabled/disabled.
+function notifyToolsListChanged() {
+  return broadcastGatewayNotification({
+    jsonrpc: "2.0",
+    method: "notifications/tools/list_changed",
+  });
+}
+
 export {
   sendToMcpServer,
   createMcpSSEStream,
@@ -689,4 +720,6 @@ export {
   registerGatewaySession,
   unregisterGatewaySession,
   getGatewaySession,
+  broadcastGatewayNotification,
+  notifyToolsListChanged,
 };
