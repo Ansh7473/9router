@@ -24,6 +24,21 @@ export const SERVER_TYPES = [
 
 export const PRESET_SERVERS = [
   {
+    name: "SkillMD",
+    type: "remote-http",
+    url: "https://mcp.skillmds.dev/api/mcp",
+    description:
+      "Search 350K+ SKILL.md agent skills and retrieve full instructions https://www.skillmds.dev ",
+    headers: { Authorization: "Bearer YOUR_API_KEY" },
+    toolNames: [
+      "search_skills",
+      "get_skill_details",
+      "list_occupations",
+      "get_popular_skills",
+      "get_install_instructions",
+    ],
+  },
+  {
     name: "Exa Search",
     type: "remote-http",
     url: "https://mcp.exa.ai/mcp",
@@ -135,6 +150,8 @@ export const PRESET_SERVERS = [
     args: ["-y", "@colbymchenry/codegraph", "serve", "--mcp"],
     description:
       "Local semantic code intelligence using tree-sitter, SQLite, and AST relationships",
+    setupNote:
+      "Install CodeGraph globally on your system first, then run `codegraph init` in your project to activate the CodeGraph MCP.",
     toolNames: [
       "codegraph_explore",
       "codegraph_node",

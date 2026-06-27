@@ -665,7 +665,9 @@ export default function McpServersPageClient() {
             </div>
           ) : (
             <div className="grid gap-3">
-              {servers.map((server) => (
+              {[...servers]
+                .sort((a, b) => Number(b.isActive) - Number(a.isActive))
+                .map((server) => (
                 <ServerCard
                   key={server.id}
                   server={server}
@@ -1604,6 +1606,14 @@ function PresetModal({ onSelect, onClose }) {
                   <p className="text-xs text-text-muted mt-0.5 truncate">
                     {preset.description}
                   </p>
+                  {preset.setupNote && (
+                    <p className="text-[10px] text-amber-400/90 mt-1 whitespace-pre-line">
+                      <span className="material-symbols-outlined text-[11px] align-middle mr-0.5">
+                        info
+                      </span>
+                      {preset.setupNote}
+                    </p>
+                  )}
                 </div>
                 <span className="material-symbols-outlined text-[16px] text-text-muted">
                   add_circle
