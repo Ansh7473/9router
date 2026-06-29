@@ -342,4 +342,13 @@ export const PRESET_SERVERS = [
     description:
       "Trace, debug, and optimize AI backend chains, prompts, and LLM calls in LangSmith",
   },
+  {
+    name: "Dart",
+    type: "local-stdio",
+    command: "dart",
+    args: ["mcp-server"],
+    env: {},
+    description:
+      "Dart and Flutter tooling — analyze, run, test, and inspect Dart/Flutter projects via the Dart SDK",
+  },
 ];

@@ -271,6 +271,14 @@ const LOCAL_STDIO_PLUGINS = [
     command: "npx",
     args: ["-y", "langsmith-mcp-server"],
   },
+  {
+    name: "dart",
+    title: "Dart",
+    description:
+      "Dart and Flutter tooling — analyze, run, test, and inspect Dart/Flutter projects via the Dart SDK",
+    command: "dart",
+    args: ["mcp-server"],
+  },
 ];
 
 function buildManagedMcpServers(plugins) {

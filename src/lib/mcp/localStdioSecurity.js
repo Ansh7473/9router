@@ -11,22 +11,31 @@ const ALLOWED_STDIO_SPECS = new Set(
   ),
 );
 
-const WINDOWS_SHIM_COMMANDS = new Set(["npm", "npx", "pnpm", "yarn", "bun"]);
+// Windows: these commands are script shims (.cmd/.bat), not real .exe files.
+// Node's spawn() without a shell can't execute them directly (throws ENOENT),
+// so we route them through cmd.exe with the correct shim extension.
+const WINDOWS_SHIM_COMMANDS = {
+  npm: "cmd",
+  npx: "cmd",
+  pnpm: "cmd",
+  yarn: "cmd",
+  bun: "cmd",
+  dart: "bat",
+  flutter: "bat",
+};
 
 export function resolveLocalStdioSpawn(command, args = []) {
   if (process.platform !== "win32") return { command, args };
   if (typeof command !== "string") return { command, args };
 
   const trimmed = command.trim();
-  if (
-    !WINDOWS_SHIM_COMMANDS.has(trimmed.toLowerCase()) ||
-    /\.(exe)$/i.test(trimmed)
-  ) {
+  const shimExt = WINDOWS_SHIM_COMMANDS[trimmed.toLowerCase()];
+  if (!shimExt || /\.(exe|cmd|bat)$/i.test(trimmed)) {
     return { command: trimmed, args };
   }
 
   const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-  return { command: comspec, args: ["/d", "/c", `${trimmed}.cmd`, ...args] };
+  return { command: comspec, args: ["/d", "/c", `${trimmed}.${shimExt}`, ...args] };
 }
 
 export function resolveLocalStdioCommand(command) {
