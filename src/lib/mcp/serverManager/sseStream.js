@@ -10,7 +10,9 @@
  */
 
 import crypto from "crypto";
+import { fetch as undiciFetch } from "undici";
 import { SessionLifetimeManager } from "../sessionLifetime.js";
+import { getMcpHttpAgent } from "../httpAgent.js";
 import { getConnections } from "./state.js";
 import { spawnLocalServer } from "./transports.js";
 
@@ -102,13 +104,14 @@ function createRemoteStream(server, encoder) {
       try {
         if (isSse) {
           // SSE transport: GET the SSE endpoint and forward the raw byte stream.
-          const res = await fetch(server.url, {
+          const res = await undiciFetch(server.url, {
             method: "GET",
             headers: {
               Accept: "text/event-stream",
               ...(server.headers || {}),
             },
             signal: abortController.signal,
+            dispatcher: getMcpHttpAgent(),
           });
 
           if (!res.ok) {
@@ -136,7 +139,7 @@ function createRemoteStream(server, encoder) {
             ),
           );
 
-          const res = await fetch(server.url, {
+          const res = await undiciFetch(server.url, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -154,6 +157,7 @@ function createRemoteStream(server, encoder) {
               id: 1,
             }),
             signal: abortController.signal,
+            dispatcher: getMcpHttpAgent(),
           });
 
           const contentType = res.headers.get("content-type") || "";

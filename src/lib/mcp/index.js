@@ -70,6 +70,14 @@ export { findPlugin, listPlugins } from "./plugins.js";
 
 export { checkRateLimit, cleanupRateLimitEntries } from "./rateLimit.js";
 
+// ─── Shared caches / infra ─────────────────────────────────────────────────
+
+export {
+  getActiveServersCached,
+  invalidateActiveServersCache,
+} from "./activeServers.js";
+export { getMcpHttpAgent } from "./httpAgent.js";
+
 // ─── Session lifetime ──────────────────────────────────────────────────────
 
 export { SessionLifetimeManager } from "./sessionLifetime.js";

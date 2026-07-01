@@ -6,8 +6,8 @@
  * gateway's own diagnostic prompt and logs resource template.
  */
 
-import { getMcpServers } from "@/models";
 import { sendToMcpServer } from "../serverManager/transports.js";
+import { getActiveServersCached } from "../activeServers.js";
 import { parsePrefixedName, findServerByPrefix } from "../prefix.js";
 
 const LOG_LEVELS = ["info", "error", "warn", "debug"];
@@ -28,7 +28,7 @@ async function completePromptRef(jsonRpc, ref) {
   const val = String(argument.value || "").toLowerCase();
 
   if (promptName === "gateway__diagnose") {
-    const servers = await getMcpServers({ isActive: true });
+    const servers = await getActiveServersCached();
     const values = servers
       .map((s) => s.name)
       .filter((name) => name.toLowerCase().includes(val));
@@ -38,7 +38,7 @@ async function completePromptRef(jsonRpc, ref) {
   const parsed = parsePrefixedName(promptName);
   if (!parsed) return null;
 
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const server = findServerByPrefix(servers, parsed.prefix);
   if (!server) return null;
 
@@ -74,7 +74,7 @@ async function completeResourceRef(jsonRpc, ref) {
       url.searchParams.get("uri") || url.searchParams.get("uriTemplate");
     if (!originalUri) return null;
 
-    const servers = await getMcpServers({ isActive: true });
+    const servers = await getActiveServersCached();
     const server = findServerByPrefix(servers, prefix);
     if (!server) return null;
 

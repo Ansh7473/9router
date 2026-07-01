@@ -7,8 +7,8 @@
  * prefixed we try every server and return the first successful reply.
  */
 
-import { getMcpServers } from "@/models";
 import { sendToMcpServer } from "../serverManager/transports.js";
+import { getActiveServersCached } from "../activeServers.js";
 import {
   getServerPrefix,
   parsePrefixedName,
@@ -57,7 +57,7 @@ function isToolAllowedByCombo(toolName, activeCombo) {
 }
 
 export async function handleToolsList(jsonRpc, activeCombo) {
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   if (servers.length === 0) {
     return { jsonrpc: "2.0", id: jsonRpc.id, result: { tools: [] } };
   }
@@ -86,7 +86,7 @@ export async function handleToolsCall(jsonRpc, activeCombo) {
     };
   }
 
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const parsed = parsePrefixedName(toolName);
 
   if (parsed) {

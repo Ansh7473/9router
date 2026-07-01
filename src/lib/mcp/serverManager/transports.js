@@ -2,7 +2,8 @@
  * Wire-level transports for user-configured MCP servers.
  *
  * Two transports are supported:
- *  - Remote HTTP (`remote-http` / `remote-sse`) via `fetch`.
+ *  - Remote HTTP (`remote-http` / `remote-sse`) via undici `fetch` with a
+ *    shared, pooled, keep-alive Agent (see `../httpAgent.js`).
  *  - Local stdio (`local-stdio`) via a spawned child process managed here.
  *
  * `sendToMcpServer` is the single public dispatcher — callers pass a server
@@ -12,12 +13,14 @@
 
 import { spawn } from "child_process";
 import crypto from "crypto";
+import { fetch as undiciFetch } from "undici";
 import {
   ensureCodeGraphInitialized,
   isCodeGraphServer,
   resolveLocalStdioSpawn,
   validateLocalStdioServer,
 } from "../security.js";
+import { getMcpHttpAgent } from "../httpAgent.js";
 import {
   getConnections,
   isInCooldown,
@@ -25,6 +28,9 @@ import {
   getCooldownRemaining,
   STDIO_QUICK_FAILURE_MS,
 } from "./state.js";
+
+/** @typedef {import("../types.js").McpServer} McpServer */
+/** @typedef {import("../types.js").JsonRpcMessage} JsonRpcMessage */
 
 // ─── Timeouts ──────────────────────────────────────────────────────────────
 
@@ -37,6 +43,10 @@ const STDIO_REQUEST_TIMEOUT_MS = 15_000;
 /**
  * Send a JSON-RPC request to a remote MCP server via HTTP POST.
  * Returns the parsed JSON-RPC response, or `null` for fire-and-forget.
+ *
+ * @param {McpServer} server
+ * @param {JsonRpcMessage} jsonRpc
+ * @returns {Promise<JsonRpcMessage|null>}
  */
 async function sendToRemoteServer(server, jsonRpc) {
   const url = server.url;
@@ -63,11 +73,12 @@ async function sendToRemoteServer(server, jsonRpc) {
   const timeout = setTimeout(() => controller.abort(), REMOTE_REQUEST_TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, {
+    const res = await undiciFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(jsonRpc),
       signal: controller.signal,
+      dispatcher: getMcpHttpAgent(),
     });
 
     const newSessionId = res.headers.get("mcp-session-id");
@@ -117,6 +128,7 @@ async function sendToRemoteServer(server, jsonRpc) {
   }
 }
 
+/** @param {McpServer} server @param {string} url */
 async function autoInitializeRemoteServer(server, url) {
   console.log(
     `[mcp-manager] Auto-initializing remote server "${server.name}"...`,
@@ -124,7 +136,7 @@ async function autoInitializeRemoteServer(server, url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), INIT_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await undiciFetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -142,6 +154,7 @@ async function autoInitializeRemoteServer(server, url) {
         id: `auto-init-${crypto.randomUUID()}`,
       }),
       signal: controller.signal,
+      dispatcher: getMcpHttpAgent(),
     });
 
     if (!res.ok) {
@@ -175,6 +188,7 @@ async function autoInitializeRemoteServer(server, url) {
 
 // ─── Local stdio transport ─────────────────────────────────────────────────
 
+/** @param {object} entry @param {McpServer} server */
 async function initializeStdioServer(entry, server) {
   try {
     console.log(`[mcp-stdio:${server.name}] Starting auto-initialization...`);
@@ -227,6 +241,8 @@ async function initializeStdioServer(entry, server) {
 /**
  * Spawn (or reuse) a local stdio server child and return the connection
  * entry. Callers should `await entry.initPromise` before writing requests.
+ *
+ * @param {McpServer} server
  */
 export function spawnLocalServer(server) {
   const store = getConnections();
@@ -347,35 +363,51 @@ export function spawnLocalServer(server) {
   return entry;
 }
 
-function sendToStdioServer(server, jsonRpc) {
-  return new Promise(async (resolve) => {
-    const entryKey = `stdio:${server.id}`;
-    let entry = getConnections().transports.get(entryKey);
+/**
+ * Send a JSON-RPC message to a local stdio server and await its response.
+ *
+ * Splits into three phases so a synchronous spawn failure produces a clean
+ * rejection instead of an unhandled Promise rejection (which was possible in
+ * the old `new Promise(async () => …)` shape):
+ *
+ *  1. `spawnLocalServer` — synchronous, may throw. Caught and returned as a
+ *     JSON-RPC error payload.
+ *  2. `await entry.initPromise` — wait for the child's `initialize` handshake.
+ *  3. Register a pending-request callback, write to stdin, resolve or time out.
+ *
+ * @param {McpServer} server
+ * @param {JsonRpcMessage} jsonRpc
+ * @returns {Promise<JsonRpcMessage>}
+ */
+async function sendToStdioServer(server, jsonRpc) {
+  const entryKey = `stdio:${server.id}`;
+  let entry = getConnections().transports.get(entryKey);
 
-    if (
-      !entry ||
-      !entry.proc ||
-      entry.proc.killed ||
-      entry.proc.exitCode !== null
-    ) {
-      try {
-        entry = spawnLocalServer(server);
-      } catch (e) {
-        resolve({
-          jsonrpc: "2.0",
-          id: jsonRpc.id,
-          error: { code: -32603, message: e.message },
-        });
-        return;
-      }
+  if (
+    !entry ||
+    !entry.proc ||
+    entry.proc.killed ||
+    entry.proc.exitCode !== null
+  ) {
+    try {
+      entry = spawnLocalServer(server);
+    } catch (e) {
+      return {
+        jsonrpc: "2.0",
+        id: jsonRpc.id,
+        error: { code: -32603, message: e.message },
+      };
     }
+  }
 
-    if (!entry.pendingRequests) entry.pendingRequests = new Map();
+  if (!entry.pendingRequests) entry.pendingRequests = new Map();
 
-    // Wait for the initialization handshake to complete.
-    if (entry.initPromise) await entry.initPromise;
+  // Wait for the initialization handshake to complete.
+  if (entry.initPromise) await entry.initPromise;
 
+  return new Promise((resolve) => {
     const requestId = jsonRpc.id || crypto.randomUUID();
+
     const timeout = setTimeout(() => {
       if (entry.pendingRequests.has(requestId)) {
         entry.pendingRequests.delete(requestId);
@@ -418,6 +450,10 @@ function sendToStdioServer(server, jsonRpc) {
 /**
  * Send a JSON-RPC request to an MCP server. Auto-detects the transport from
  * `server.type` and returns the parsed response (or `null` on fire-and-forget).
+ *
+ * @param {McpServer} server
+ * @param {JsonRpcMessage} jsonRpc
+ * @returns {Promise<JsonRpcMessage|null>}
  */
 export async function sendToMcpServer(server, jsonRpc) {
   if (server.type === "local-stdio") {

@@ -8,8 +8,8 @@
  *  - `mcp-gateway://gateway/logs{?level}` — placeholder (no logs exposed)
  */
 
-import { getMcpServers } from "@/models";
 import { sendToMcpServer } from "../serverManager/transports.js";
+import { getActiveServersCached } from "../activeServers.js";
 import { getServerPrefix, findServerByPrefix } from "../prefix.js";
 import { aggregateFromServers } from "./aggregator.js";
 
@@ -34,7 +34,7 @@ const GATEWAY_LOGS_TEMPLATE = {
 // ─── resources/list ────────────────────────────────────────────────────────
 
 export async function handleResourcesList(jsonRpc) {
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const resources = [GATEWAY_STATUS_RESOURCE];
 
   if (servers.length > 0) {
@@ -63,7 +63,7 @@ export async function handleResourcesList(jsonRpc) {
 // ─── resources/templates/list ──────────────────────────────────────────────
 
 export async function handleResourceTemplatesList(jsonRpc) {
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const resourceTemplates = [GATEWAY_LOGS_TEMPLATE];
 
   if (servers.length > 0) {
@@ -92,7 +92,7 @@ export async function handleResourceTemplatesList(jsonRpc) {
 // ─── resources/read ────────────────────────────────────────────────────────
 
 async function readGatewayStatus(jsonRpc) {
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
 
   const activeServers = await Promise.all(
     servers.map(async (s) => {
@@ -173,7 +173,7 @@ async function readUpstreamResource(jsonRpc, uriStr) {
     const originalUri = url.searchParams.get("uri");
     if (!originalUri) return null;
 
-    const servers = await getMcpServers({ isActive: true });
+    const servers = await getActiveServersCached();
     const server = findServerByPrefix(servers, prefix);
     if (!server) return null;
 

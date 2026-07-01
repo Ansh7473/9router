@@ -9,6 +9,7 @@
  */
 
 import { sendToMcpServer } from "../serverManager/transports.js";
+import { invalidateActiveServersCache } from "../activeServers.js";
 import { getServerPrefix } from "../prefix.js";
 
 // ─── Tools/list short-lived cache ──────────────────────────────────────────
@@ -22,11 +23,13 @@ const TOOLS_LIST_TTL_MS = 30_000;
 let _toolsListCache = { key: null, tools: null, expires: 0 };
 
 /**
- * Invalidate the tools/list cache. Call this whenever the set of MCP servers
- * changes (add / remove / toggle) so clients don't see stale entries.
+ * Invalidate every cache that depends on the set of MCP servers. Call this
+ * whenever a server is created / updated / deleted so both the tools/list
+ * fan-out cache and the short-lived active-servers cache drop stale entries.
  */
 export function invalidateToolsListCache() {
   _toolsListCache = { key: null, tools: null, expires: 0 };
+  invalidateActiveServersCache();
 }
 
 function cacheKeyForServers(servers) {
