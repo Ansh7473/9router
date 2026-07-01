@@ -3,6 +3,18 @@ import path from "path";
 import { execFileSync } from "child_process";
 import coworkPlugins from "@/shared/constants/coworkPlugins";
 
+/**
+ * Security layer for local stdio MCP servers.
+ *
+ * Enforces two guarantees:
+ *  1. Only commands/args listed in the preset stdio plugin registry may spawn
+ *     (prevents arbitrary code execution via user-configured stdio servers).
+ *  2. Windows script shims (`.cmd`/`.bat`) are routed through `cmd.exe` so
+ *     Node's `spawn()` can execute them.
+ *
+ * Also owns the CodeGraph-specific one-time initialization hook.
+ */
+
 const { LOCAL_STDIO_PLUGINS } = coworkPlugins;
 
 const ALLOWED_STDIO_SPECS = new Set(
@@ -24,6 +36,10 @@ const WINDOWS_SHIM_COMMANDS = {
   flutter: "bat",
 };
 
+/**
+ * Resolve the actual spawn command/args for a given plugin command. On
+ * Windows, wraps `.cmd`/`.bat` shims through `cmd.exe`; otherwise a no-op.
+ */
 export function resolveLocalStdioSpawn(command, args = []) {
   if (process.platform !== "win32") return { command, args };
   if (typeof command !== "string") return { command, args };
@@ -35,13 +51,21 @@ export function resolveLocalStdioSpawn(command, args = []) {
   }
 
   const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-  return { command: comspec, args: ["/d", "/c", `${trimmed}.${shimExt}`, ...args] };
+  return {
+    command: comspec,
+    args: ["/d", "/c", `${trimmed}.${shimExt}`, ...args],
+  };
 }
 
+/** Convenience: return only the resolved command binary. */
 export function resolveLocalStdioCommand(command) {
   return resolveLocalStdioSpawn(command).command;
 }
 
+/**
+ * Return true when `(command, args)` exactly matches a registered stdio
+ * plugin spec. Used to reject arbitrary user-supplied commands.
+ */
 export function isAllowedLocalStdioCommand(command, args = []) {
   if (typeof command !== "string" || !Array.isArray(args)) return false;
   return ALLOWED_STDIO_SPECS.has(
@@ -49,6 +73,10 @@ export function isAllowedLocalStdioCommand(command, args = []) {
   );
 }
 
+/**
+ * Validate a user-supplied local-stdio server record.
+ * Returns `{ ok: true }` on success, or `{ ok: false, error }` on failure.
+ */
 export function validateLocalStdioServer(server) {
   if (server?.type !== "local-stdio") return { ok: true };
 
@@ -75,6 +103,7 @@ export function validateLocalStdioServer(server) {
   return { ok: true };
 }
 
+/** Identify a CodeGraph plugin/server regardless of how it was configured. */
 export function isCodeGraphServer(serverOrPlugin) {
   return (
     serverOrPlugin?.command === "codegraph" ||
@@ -86,6 +115,10 @@ export function isCodeGraphServer(serverOrPlugin) {
   );
 }
 
+/**
+ * One-time CodeGraph bootstrap. If the target project has no `.codegraph`
+ * directory, run `codegraph init` synchronously before spawning the server.
+ */
 export function ensureCodeGraphInitialized(projectRoot = process.cwd()) {
   const codegraphDir = path.join(
     /*turbopackIgnore: true*/ projectRoot,

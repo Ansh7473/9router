@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMcpServerById } from "@/models";
-import { sendToMcpServer } from "@/lib/mcp/mcpServerManager";
+import { sendToMcpServer } from "@/lib/mcp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

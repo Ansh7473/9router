@@ -7,12 +7,10 @@ import {
   isCodeGraphServer,
   resolveLocalStdioSpawn,
   validateLocalStdioServer,
-} from "@/lib/mcp/localStdioSecurity";
-import {
   computeBasePrefix,
   normalizePrefix,
   makeUniquePrefix,
-} from "@/lib/mcp/mcpServerPrefix";
+} from "@/lib/mcp";
 
 // One-time-per-process guard: assign unique prefixes to any legacy servers
 // that predate the prefix feature.

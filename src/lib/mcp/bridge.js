@@ -1,24 +1,41 @@
-// Inline stdio<->SSE bridge for MCP. Spawns one child per plugin on demand,
-// broadcasts JSON-RPC frames over SSE, accepts client messages via HTTP POST.
+/**
+ * Inline stdio ↔ SSE bridge for preset MCP plugins.
+ *
+ * One child process is spawned per plugin on demand. Newline-delimited
+ * JSON-RPC frames from the child's stdout are filtered (see `smartFilterText`)
+ * and fanned out over all registered SSE sessions. Client messages arrive via
+ * HTTP POST and are written to the child's stdin. Idle children are killed
+ * after `IDLE_TIMEOUT_MS`.
+ *
+ * Only plugins registered in the preset plugin registry may spawn — this is a
+ * hard RCE guard against user-supplied commands.
+ */
 
 import { spawn } from "child_process";
 import crypto from "crypto";
-import { findPlugin as findPluginInRegistry } from "./pluginRegistry.js";
-import { SessionLifetimeManager } from "./sessionManager.js";
+import { findPlugin as findPluginInRegistry } from "./plugins.js";
 import {
   ensureCodeGraphInitialized,
   isCodeGraphServer,
   resolveLocalStdioSpawn,
-} from "./localStdioSecurity.js";
+} from "./security.js";
+
+// ─── Constants ─────────────────────────────────────────────────────────────
 
 const G_KEY = "__9routerMcpBridges";
-const MAX_TEXT_CHARS = 50000;
+const MAX_TEXT_CHARS = 50_000;
 const COLLAPSE_THRESHOLD = 30;
 const COLLAPSE_KEEP_HEAD = 10;
 const COLLAPSE_KEEP_TAIL = 5;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const KILL_GRACE_MS = 5_000;
 
-// Drop noise nodes, collapse repeated siblings, hard-truncate. Preserve [ref=eXX].
+// ─── Text filtering ────────────────────────────────────────────────────────
+
+/**
+ * Drop noise nodes, collapse repeated siblings, hard-truncate.
+ * Preserves `[ref=eXX]` markers so downstream tooling can still click.
+ */
 function smartFilterText(text) {
   if (typeof text !== "string" || text.length < 2000) return text;
   let out = text;
@@ -32,21 +49,26 @@ function smartFilterText(text) {
   return out;
 }
 
-// Group consecutive lines sharing the same leading indent + role prefix; collapse if >= COLLAPSE_THRESHOLD.
+/**
+ * Group consecutive lines sharing the same leading indent + role prefix;
+ * collapse the middle when at least `COLLAPSE_THRESHOLD` siblings appear.
+ */
 function collapseRepeated(text) {
   const lines = text.split("\n");
   const out = [];
   let i = 0;
+
   while (i < lines.length) {
     const line = lines[i];
-    const m = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-    if (!m) {
+    const match = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
+    if (!match) {
       out.push(line);
       i++;
       continue;
     }
-    const indent = m[1];
-    const role = m[2];
+
+    const indent = match[1];
+    const role = match[2];
     let j = i;
     while (j < lines.length) {
       const ln = lines[j];
@@ -61,6 +83,7 @@ function collapseRepeated(text) {
       }
       break;
     }
+
     const groupLen = j - i;
     if (groupLen >= COLLAPSE_THRESHOLD) {
       const headEnd = findNthSiblingEnd(
@@ -111,7 +134,7 @@ function findLastNSiblingStart(lines, end, indent, role, n) {
   return positions.length > n ? positions[positions.length - n] : end;
 }
 
-// Apply filter to JSON-RPC tool/result content text blocks only.
+/** Apply the text filter to any `text` blocks inside a tools/call result. */
 function filterFrame(line) {
   try {
     const msg = JSON.parse(line);
@@ -132,28 +155,81 @@ function filterFrame(line) {
     return line;
   }
 }
-const getStore = () => {
+
+// ─── Process store ─────────────────────────────────────────────────────────
+
+function getStore() {
   if (!globalThis[G_KEY]) globalThis[G_KEY] = new Map();
   return globalThis[G_KEY];
-};
+}
 
-// Only registered stdio plugins may spawn. No user-defined commands (RCE prevention).
-function findPlugin(name) {
+/** Look up a preset plugin. Only registered plugins may spawn. */
+export function findPlugin(name) {
   return findPluginInRegistry(name) || null;
 }
 
-function getOrSpawn(name) {
+// ─── Idle timeout ──────────────────────────────────────────────────────────
+
+function startIdleTimer(name, entry) {
+  clearIdleTimer(entry);
+  entry.idleTimer = setTimeout(() => {
+    if (entry.sessions.size === 0) {
+      console.log(`[mcp:${name}] idle timeout, killing process`);
+      killEntry(entry);
+    } else {
+      console.log(
+        `[mcp:${name}] idle timeout but has ${entry.sessions.size} active session(s), skipping`,
+      );
+    }
+  }, IDLE_TIMEOUT_MS);
+}
+
+function resetIdleTimer(name, entry) {
+  if (entry.idleTimer) startIdleTimer(name, entry);
+}
+
+function clearIdleTimer(entry) {
+  if (entry.idleTimer) {
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = null;
+  }
+}
+
+function killEntry(entry) {
+  clearIdleTimer(entry);
+  if (entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
+    try {
+      entry.proc.kill("SIGTERM");
+    } catch {}
+    setTimeout(() => {
+      if (entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
+        try {
+          entry.proc.kill("SIGKILL");
+        } catch {}
+      }
+    }, KILL_GRACE_MS);
+  }
+}
+
+function cleanupEntry(name, entry) {
+  clearIdleTimer(entry);
+  const store = getStore();
+  if (store.get(name) === entry) store.delete(name);
+}
+
+// ─── Spawn / lifecycle ─────────────────────────────────────────────────────
+
+export function getOrSpawn(name) {
   const store = getStore();
   let entry = store.get(name);
   if (entry?.proc && !entry.proc.killed && entry.proc.exitCode === null) {
-    // Reset idle timer since it's being used
     resetIdleTimer(name, entry);
     return entry;
   }
 
-  // Clear any stale entry
+  // Clear any stale entry.
   if (entry) {
-    clearIdleTimer(name, entry);
+    clearIdleTimer(entry);
     store.delete(name);
   }
 
@@ -173,7 +249,7 @@ function getOrSpawn(name) {
   entry = { proc, sessions: new Map(), buffer: "", startTime, idleTimer: null };
   store.set(name, entry);
 
-  // Parse newline-delimited JSON-RPC from child stdout, broadcast to all sessions.
+  // Parse newline-delimited JSON-RPC from child stdout, broadcast to sessions.
   proc.stdout.on("data", (chunk) => {
     entry.buffer += chunk.toString("utf8");
     let idx;
@@ -186,7 +262,7 @@ function getOrSpawn(name) {
         try {
           send(`event: message\ndata: ${line}\n\n`);
         } catch {
-          /* ignore broken pipe */
+          /* broken pipe */
         }
       }
     }
@@ -197,7 +273,6 @@ function getOrSpawn(name) {
     const msg = d.toString().trim();
     if (!msg) return;
     console.log(`[mcp:${name}] stderr:`, msg);
-    // Notify all sessions of stderr
     for (const send of entry.sessions.values()) {
       try {
         send(
@@ -218,7 +293,6 @@ function getOrSpawn(name) {
       `[mcp:${name}] exited code=${code} signal=${signal} runtime=${runtime}ms`,
     );
     cleanupEntry(name, entry);
-    // Notify sessions
     for (const send of entry.sessions.values()) {
       try {
         send(
@@ -235,58 +309,9 @@ function getOrSpawn(name) {
   return entry;
 }
 
-// ─── Idle timeout ──────────────────────────────────────────────────────────
+// ─── Session management ────────────────────────────────────────────────────
 
-function startIdleTimer(name, entry) {
-  clearIdleTimer(name, entry);
-  entry.idleTimer = setTimeout(() => {
-    if (entry.sessions.size === 0) {
-      console.log(`[mcp:${name}] idle timeout, killing process`);
-      killEntry(name, entry);
-    } else {
-      // Has active sessions, skip idle kill but log
-      console.log(
-        `[mcp:${name}] idle timeout but has ${entry.sessions.size} active session(s), skipping`,
-      );
-    }
-  }, IDLE_TIMEOUT_MS);
-}
-
-function resetIdleTimer(name, entry) {
-  if (entry.idleTimer) startIdleTimer(name, entry);
-}
-
-function clearIdleTimer(_name, entry) {
-  if (entry.idleTimer) {
-    clearTimeout(entry.idleTimer);
-    entry.idleTimer = null;
-  }
-}
-
-function killEntry(name, entry) {
-  clearIdleTimer(name, entry);
-  if (entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
-    try {
-      entry.proc.kill("SIGTERM");
-    } catch {}
-    // Force kill after 5 seconds
-    setTimeout(() => {
-      if (entry.proc && !entry.proc.killed && entry.proc.exitCode === null) {
-        try {
-          entry.proc.kill("SIGKILL");
-        } catch {}
-      }
-    }, 5000);
-  }
-}
-
-function cleanupEntry(name, entry) {
-  clearIdleTimer(name, entry);
-  const store = getStore();
-  store.delete(name);
-}
-
-function registerSession(name, sendFn) {
+export function registerSession(name, sendFn) {
   const entry = getOrSpawn(name);
   const sid = crypto.randomUUID();
   entry.sessions.set(sid, sendFn);
@@ -296,14 +321,13 @@ function registerSession(name, sendFn) {
   return sid;
 }
 
-function unregisterSession(name, sid) {
+export function unregisterSession(name, sid) {
   const entry = getStore().get(name);
   if (!entry) return;
   entry.sessions.delete(sid);
   console.log(
     `[mcp:${name}] session unregistered: ${sid} (total: ${entry.sessions.size})`,
   );
-  // If no sessions left and process is still running, start idle timer
   if (
     entry.sessions.size === 0 &&
     entry.proc &&
@@ -315,19 +339,22 @@ function unregisterSession(name, sid) {
   }
 }
 
-function sendToChild(name, jsonRpc) {
+/** Write a JSON-RPC message to the plugin's stdin. */
+export function sendToChild(name, jsonRpc) {
   const entry = getStore().get(name);
-  if (!entry?.proc?.stdin?.writable)
+  if (!entry?.proc?.stdin?.writable) {
     throw new Error(`Bridge not running: ${name}`);
+  }
   entry.proc.stdin.write(`${JSON.stringify(jsonRpc)}\n`);
 }
 
-function isRunning(name) {
+export function isRunning(name) {
   const entry = getStore().get(name);
   return !!(entry?.proc && !entry.proc.killed && entry.proc.exitCode === null);
 }
 
-function getStatus() {
+/** Snapshot of every running bridge child. Used by the status endpoint. */
+export function getStatus() {
   const store = getStore();
   const status = {};
   for (const [name, entry] of store.entries()) {
@@ -343,13 +370,3 @@ function getStatus() {
   }
   return status;
 }
-
-export {
-  getOrSpawn,
-  registerSession,
-  unregisterSession,
-  sendToChild,
-  isRunning,
-  findPlugin,
-  getStatus,
-};

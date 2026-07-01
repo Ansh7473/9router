@@ -4,12 +4,11 @@ import {
   updateMcpServer,
   sanitizeMcpServer,
 } from "@/models";
-import { checkRateLimit } from "@/lib/mcp/rateLimiter";
+import { checkRateLimit, validateLocalStdioServer } from "@/lib/mcp";
 import {
   hasDashboardOrCliAuth,
   unauthorizedResponse,
 } from "@/lib/auth/dashboardApiAuth";
-import { validateLocalStdioServer } from "@/lib/mcp/localStdioSecurity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getMcpServers, createMcpServer, sanitizeMcpServer } from "@/models";
-import { validateLocalStdioServer } from "@/lib/mcp/localStdioSecurity";
-import { invalidateToolsListCache } from "@/lib/mcp/mcpGatewayHandlers";
-import { notifyToolsListChanged } from "@/lib/mcp/mcpServerManager";
+import {
+  validateLocalStdioServer,
+  invalidateToolsListCache,
+  notifyToolsListChanged,
+} from "@/lib/mcp";
 
 export const dynamic = "force-dynamic";
 

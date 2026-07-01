@@ -1,5 +1,5 @@
 import { getMcpServerById } from "@/models";
-import { createMcpSSEStream } from "@/lib/mcp/mcpServerManager";
+import { createMcpSSEStream } from "@/lib/mcp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
