@@ -1,29 +1,28 @@
 /**
- * MCP Session Lifetime Manager
+ * Session lifetime manager.
  *
- * Tracks sessions with timestamps, supports expiry checks,
- * and periodic cleanup of stale sessions.
- *
- * Uses a global store so it survives hot-reloads in dev mode.
+ * Tracks sessions with creation/activity timestamps, expires stale entries,
+ * and runs periodic cleanup. State is kept on `globalThis` so it survives
+ * Next.js hot reloads in dev.
  */
 
 const G_KEY = "__9routerMcpSessions";
 const DEFAULT_SESSION_LIFETIME_MS = 30 * 60 * 1000; // 30 minutes
 const DEFAULT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-const getStore = () => {
+function getStore() {
   if (!globalThis[G_KEY]) {
     globalThis[G_KEY] = {
-      sessions: new Map(), // sessionId -> session data
-      timestamps: new Map(), // sessionId -> creation timestamp
-      lastActivity: new Map(), // sessionId -> last activity timestamp
+      sessions: new Map(),
+      timestamps: new Map(),
+      lastActivity: new Map(),
       cleanupTimer: null,
     };
   }
   return globalThis[G_KEY];
-};
+}
 
-class SessionLifetimeManager {
+export class SessionLifetimeManager {
   constructor(name = "mcp", options = {}) {
     this.name = name;
     this.sessionLifetime =
@@ -65,14 +64,12 @@ class SessionLifetimeManager {
   }
 
   getSessionAge(sessionId) {
-    const store = getStore();
-    const timestamp = store.timestamps.get(sessionId);
+    const timestamp = getStore().timestamps.get(sessionId);
     return timestamp ? Date.now() - timestamp : undefined;
   }
 
   getSessionIdleTime(sessionId) {
-    const store = getStore();
-    const lastAct = store.lastActivity.get(sessionId);
+    const lastAct = getStore().lastActivity.get(sessionId);
     return lastAct ? Date.now() - lastAct : undefined;
   }
 
@@ -85,31 +82,31 @@ class SessionLifetimeManager {
   cleanupExpiredSessions(cleanupCallback) {
     const store = getStore();
     const now = Date.now();
-    const expiredSessions = [];
+    const expired = [];
 
     for (const [sessionId, timestamp] of store.timestamps.entries()) {
       if (now - timestamp > this.sessionLifetime) {
         const session = store.sessions.get(sessionId);
-        if (session) {
-          expiredSessions.push({ sessionId, session });
-        }
+        if (session) expired.push({ sessionId, session });
       }
     }
 
-    if (expiredSessions.length > 0) {
-      console.log(
-        `[mcp-session:${this.name}] Cleaning up ${expiredSessions.length} expired session(s): ${expiredSessions.map((s) => s.sessionId).join(", ")}`,
-      );
-      for (const { sessionId, session } of expiredSessions) {
-        this.removeSession(sessionId);
-        try {
-          cleanupCallback(sessionId, session);
-        } catch (err) {
-          console.error(
-            `[mcp-session:${this.name}] Error cleaning up session ${sessionId}:`,
-            err,
-          );
-        }
+    if (expired.length === 0) return;
+
+    console.log(
+      `[mcp-session:${this.name}] Cleaning up ${expired.length} expired session(s): ${expired
+        .map((s) => s.sessionId)
+        .join(", ")}`,
+    );
+    for (const { sessionId, session } of expired) {
+      this.removeSession(sessionId);
+      try {
+        cleanupCallback(sessionId, session);
+      } catch (err) {
+        console.error(
+          `[mcp-session:${this.name}] Error cleaning up session ${sessionId}:`,
+          err,
+        );
       }
     }
   }
@@ -141,5 +138,3 @@ class SessionLifetimeManager {
     return Array.from(getStore().sessions.keys());
   }
 }
-
-export { SessionLifetimeManager };

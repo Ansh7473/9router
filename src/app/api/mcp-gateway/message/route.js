@@ -1,6 +1,8 @@
 import { getMcpServers, getMcpServerById } from "@/models";
-import { sendToMcpServer, getGatewaySession, unregisterGatewaySession } from "@/lib/mcp/mcpServerManager";
 import {
+  sendToMcpServer,
+  getGatewaySession,
+  unregisterGatewaySession,
   handleToolsList,
   handleToolsCall,
   handlePromptsList,
@@ -9,16 +11,14 @@ import {
   handleResourceTemplatesList,
   handleResourcesRead,
   handleCompletionComplete,
-} from "@/lib/mcp/mcpGatewayHandlers";
-import { checkRateLimit } from "@/lib/mcp/rateLimiter";
-import { validateApiKey, getComboByName, getCombos } from "@/lib/localDb";
-import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
-import {
+  checkRateLimit,
   SUPPORTED_PROTOCOL_VERSIONS,
   MAX_BATCH_SIZE,
   negotiateProtocolVersion,
   deriveSessionOwner,
-} from "@/lib/mcp/gatewayProtocol";
+} from "@/lib/mcp";
+import { validateApiKey, getComboByName, getCombos } from "@/lib/localDb";
+import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

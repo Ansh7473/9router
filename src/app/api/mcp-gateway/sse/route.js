@@ -3,13 +3,11 @@ import {
   createMcpSSEStream,
   registerGatewaySession,
   unregisterGatewaySession,
-} from "@/lib/mcp/mcpServerManager";
-import { validateApiKey } from "@/lib/localDb";
-import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
-import {
   SUPPORTED_PROTOCOL_VERSIONS,
   deriveSessionOwner,
-} from "@/lib/mcp/gatewayProtocol";
+} from "@/lib/mcp";
+import { validateApiKey } from "@/lib/localDb";
+import { isMcpApiKey } from "@/shared/utils/mcpApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
