@@ -6,8 +6,8 @@
  * `gateway__diagnose` prompt that reports on gateway state.
  */
 
-import { getMcpServers } from "@/models";
 import { sendToMcpServer } from "../serverManager/transports.js";
+import { getActiveServersCached } from "../activeServers.js";
 import { parsePrefixedName, findServerByPrefix } from "../prefix.js";
 import { aggregateFromServers } from "./aggregator.js";
 
@@ -36,7 +36,7 @@ function makePromptError(id, promptName) {
 }
 
 export async function handlePromptsList(jsonRpc) {
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const prompts = [GATEWAY_DIAGNOSE_PROMPT];
 
   if (servers.length > 0) {
@@ -62,7 +62,7 @@ export async function handlePromptsList(jsonRpc) {
 }
 
 async function handleGatewayDiagnosePrompt(jsonRpc) {
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const lines = servers
     .map(
       (s, idx) => `${idx + 1}. ${s.name} (${s.type}) - Active: ${s.isActive}`,
@@ -96,7 +96,7 @@ export async function handlePromptsGet(jsonRpc) {
   const parsed = parsePrefixedName(promptName);
   if (!parsed) return makePromptError(jsonRpc.id, promptName);
 
-  const servers = await getMcpServers({ isActive: true });
+  const servers = await getActiveServersCached();
   const server = findServerByPrefix(servers, parsed.prefix);
   if (!server) return makePromptError(jsonRpc.id, promptName);
 
