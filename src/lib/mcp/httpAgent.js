@@ -19,8 +19,11 @@ const G_KEY = "__9routerMcpHttpAgent";
 const CONNECTIONS_PER_ORIGIN = 32;
 const KEEP_ALIVE_TIMEOUT_MS = 60_000;
 const KEEP_ALIVE_MAX_TIMEOUT_MS = 10 * 60_000;
-const HEADERS_TIMEOUT_MS = 30_000;
-const BODY_TIMEOUT_MS = 120_000; // matches REMOTE_REQUEST_TIMEOUT_MS
+// Body/headers timeouts must be ≥ REMOTE_REQUEST_TIMEOUT_MS in transports.js
+// (default 5 min) — otherwise undici will kill long-running remote MCP calls
+// like firecrawl_crawl or stitch generation before our own timeout fires.
+const HEADERS_TIMEOUT_MS = 60_000;
+const BODY_TIMEOUT_MS = 300_000;
 
 /** Lazy-init a process-wide dispatcher for MCP remote calls. */
 export function getMcpHttpAgent() {

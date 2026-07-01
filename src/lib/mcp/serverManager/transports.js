@@ -33,10 +33,28 @@ import {
 /** @typedef {import("../types.js").JsonRpcMessage} JsonRpcMessage */
 
 // ─── Timeouts ──────────────────────────────────────────────────────────────
+//
+// MCP tools vary wildly in how long they take:
+//   - snapshot/status calls: ~30-200 ms
+//   - browser navigation: ~5-15 s
+//   - codegraph_explore on a large repo: 20-60 s
+//   - firecrawl_crawl / firecrawl_agent: 30-300 s
+//   - stitch / higgsfield video generation: 60-300 s
+//
+// A 15 s stdio timeout (the old value) killed real tools mid-flight —
+// codegraph_search + navigate_page already hit the edge in smoke tests.
+// 5 minutes is generous enough to cover every real tool while still failing
+// fast on a truly stuck upstream. Overridable per env so users running very
+// heavy workloads (large crawls, long renders) can bump it without a rebuild.
 
-const INIT_TIMEOUT_MS = 8_000;
-const REMOTE_REQUEST_TIMEOUT_MS = 120_000;
-const STDIO_REQUEST_TIMEOUT_MS = 15_000;
+function envMs(name, fallback) {
+  const raw = parseInt(process.env[name], 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+const INIT_TIMEOUT_MS = envMs("MCP_INIT_TIMEOUT_MS", 15_000);
+const REMOTE_REQUEST_TIMEOUT_MS = envMs("MCP_REMOTE_TIMEOUT_MS", 300_000);
+const STDIO_REQUEST_TIMEOUT_MS = envMs("MCP_STDIO_TIMEOUT_MS", 300_000);
 
 // ─── Remote HTTP transport ─────────────────────────────────────────────────
 
@@ -70,7 +88,10 @@ async function sendToRemoteServer(server, jsonRpc) {
   };
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REMOTE_REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    REMOTE_REQUEST_TIMEOUT_MS,
+  );
 
   try {
     const res = await undiciFetch(url, {
